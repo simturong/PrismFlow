@@ -191,3 +191,70 @@
 #### 🔍 이슈 4: 회의 종료 시각(end_time) 이중 기록으로 인한 덮어쓰기 방지
 - **상황**: `MeetingContext.end_meeting()`이 이미 `end_session(session_id, end_time=...)`로 종료 시각을 기록한 뒤 `meeting_ended` 신호를 쏘는데, `ReportWorker`가 summary 저장을 위해 다시 `end_session(...)`을 호출하면서 `end_time`이 워커 실행 시점으로 잘못 덮어써질 우려가 있었음.
 - **결정**: 워커가 summary를 쓰기 전에 `get_session`으로 **원본 `end_time`을 읽어 그대로 재전달**하도록 설계하여, 실제 회의 종료 시각을 보존하면서 summary만 안전하게 갱신하도록 정렬함. (테스트에서 `end_time`이 원본 값으로 유지되는지 명시적으로 단언.)
+
+---
+
+## 🚀 Phase 6: 실제 STT/화자분리 모델 연동 및 실시간 검증 (2026-06-20)
+
+> Mock 4-에이전트 파이프라인 위에 `stt_agent.py`의 스텁을 실제 **OpenVINO Whisper + pyannote 화자분리** 엔진으로 교체. 착수 순서 6-0(Pre-flight 게이트)→6-1(실엔진)→6-2(안정화)를 고정 진행.
+
+### 1. 주요 구현 내용
+- **6-0 모델명 실검증**: 로컬 `claude` CLI(v2.1.183)로 3개 에이전트 모델을 실호출 검증. `claude-3-5-haiku`가 2026-02-19 retired되어 거부됨을 확인하고 Flow/Chat을 `claude-haiku-4-5`로 교체(Report는 `claude-opus-4-8` 유지). 코드·테스트 동기화.
+- **6-0 E2E 게이트에서 발견된 버그 4건 수정**: ① `run.bat`의 `(.venv)` 괄호 cmd 파서 깨짐, ② claude CLI의 세션 ID UUID 강제 사양 변경, ③ 사용자 DB 구 스키마 잔존, ④ Flow `mermaid.min.js` 미로드. (각 항목은 아래 시행착오 참조)
+- **Chat 챗봇 격리·경량화**: `claude -p`를 코딩 에이전트가 아닌 회의 비서로 동작시키기 위해 `cli_controller`를 격리 실행(`--strict-mcp-config`로 MCP 0개, `--setting-sources user`+중립 cwd로 프로젝트 컨텍스트 차단, 에이전트별 `--system-prompt` 페르소나)으로 재설계. 프롬프트는 STDIN 전달로 전환.
+- **6-1 실엔진**: `_load_openvino_models()`/`_process_inference()` 실구현. HW 자동감지(`_detect_device`: OpenVINO GPU→CPU), `openvino_genai.WhisperPipeline`(language=`<|ko|>`, return_timestamps) 전사 + `pyannote.audio 4.0.4` 화자분리. 블라인드 0.5초 재전사 스텁을 **에너지 VAD 엔드포인팅(발화 단위 1회 전사)** 으로 재설계.
+- **6-2 안정화 내장**: `vad_threshold` 에너지 게이트 연동, 발화 분절 버퍼 + 20초 강제 분절(백프레셔), 절대 샘플 타임라인 동기, GPU 로드 실패 시 CPU 폴백.
+- **모델 로컬 번들**: `prismflow/resources/models/whisper-small-int8-ov` 다운로드 배치. `tests/test_stt.py`에 VAD 분절·디바이스 감지 단위테스트 + 실엔진 옵트인(`STT_LIVE=1`) 분리. 전체 회귀 `pytest tests/` → **41 passed, 1 skipped**.
+- **실측 환경**: Intel Core Ultra 7 258V + **Arc 140V iGPU(16GB)** + NPU. 라이브 한국어 전사 정확도 우수(예: "안녕하세요 마이크 준비가 완료되었습니다…"), 3초 오디오 GPU 전사 0.5초(실시간 6×).
+
+### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
+
+#### 🔍 이슈 1: 은퇴한 모델 별칭 `claude-3-5-haiku` 거부
+- **상황**: 6-0 모델 실검증에서 `claude-3-5-haiku`가 "retired on February 19, 2026"로 거부(exit 1). Mock 테스트만 돌던 탓에 그동안 드러나지 않았음.
+- **결정**: 유효 별칭 `claude-haiku-4-5`로 실검증 통과 후 Flow/Chat 코드·`test_flow` 동기화(테스트를 모델 인자 실검증으로 강화).
+
+#### 🔍 이슈 2: claude CLI의 세션 ID UUID 강제 (Chat/Report 전멸)
+- **상황**: CLI 사양이 바뀌어 `--resume`/`--session-id`가 **유효 UUID만 허용**. `chat-session-...`·`report-session-...` 같은 의미 기반 세션명이 전부 거부되어 Chat/Report가 동작 불능. (Flow도 동일 원인 잠복)
+- **결정**: `cli_controller._normalize_session_id`로 의미 세션명을 `uuid5` 결정적 변환(동일 입력→동일 UUID로 resume 안정성 보장). 기존 resume→`--session-id` 폴백을 정상화. 단위테스트 추가.
+
+#### 🔍 이슈 3: 사용자 DB의 구 `transcripts` 스키마 잔존 (보고서 크래시)
+- **상황**: 실행 중 `ReportWorker`가 `no such column: start_time`로 실패. 원인은 Phase 2 이전에 생성된 사용자 `prismflow.db`의 `transcripts`가 단일 `timestamp` 컬럼 구조로 남아 있었고, `CREATE TABLE IF NOT EXISTS`는 컬럼을 갱신하지 못함. `add_transcript`도 조용히 -1 실패 중이었음.
+- **결정**: `db._migrate_legacy_transcripts`로 구 스키마 감지 시 테이블을 신 스키마로 재생성하며 `timestamp→start_time/end_time` 매핑으로 데이터 보존. 실제 DB 이관 + 마이그레이션 단위테스트 추가.
+
+#### 🔍 이슈 4: QWebEngine의 `file://` 스크립트 차단 (`mermaid is not defined`)
+- **상황**: Flow 오버레이가 `mermaid is not defined` 콘솔 에러로 다이어그램 미표출. `setHtml(html)`을 baseUrl 없이 호출해 페이지 origin이 `about:blank`가 되면서 `<script src="file:///mermaid.min.js">` 로컬 번들 로드가 보안 차단됨.
+- **결정**: `setHtml(html, baseUrl)`에 resources 디렉토리 file:// baseUrl을 지정해 로컬 콘텐츠 origin을 부여, 오프라인 번들 로드를 복구.
+
+#### 🔍 이슈 5: Chat 챗봇이 코딩 에이전트로 동작 + 프로젝트 메모리 누수
+- **상황**: 회의 질문에 "What would you like me to help with, Antigravity?"로 되묻고 응답이 느림. `claude -p`가 프로젝트 CLAUDE.md/메모리(`Antigravity`)와 MCP 서버들을 매번 로딩해 **Claude Code 코딩 에이전트 페르소나**로 동작했기 때문.
+- **결정**: 사용자 요구("완전 클린·경량·Haiku 전용")에 맞춰 격리 실행 도입 — `--strict-mcp-config`(MCP 0개·고속), `--setting-sources user`+중립 cwd(프로젝트 컨텍스트 차단), 에이전트별 `--system-prompt` 페르소나, `--exclude-dynamic-system-prompt-sections`. 실측으로 누수 차단·경량화 확인.
+
+#### 🔍 이슈 6: Windows `shell=True`의 다중줄 프롬프트 훼손 (세션 맥락 유실)
+- **상황**: Chat 세션이 회의 맥락을 기억하지 못함. 단일줄 프롬프트는 기억하나 **다중줄(전사록) 프롬프트는 유실**. Windows에서 `shell=True`로 다중줄 인자를 넘기면 `cmd.exe`가 줄바꿈에서 명령을 잘라 첫 줄만 전달됐음.
+- **결정**: `shell=False` + `shutil.which`로 실행파일(`claude.CMD`) 해석 + **프롬프트를 명령줄 인자가 아닌 STDIN으로 전달**. 통합 스모크로 다중줄 맥락 기억·스트리밍·무누수 검증.
+
+#### 🔍 이슈 7: OpenVINO int8 Whisper의 word_timestamps 미지원
+- **상황**: 추론 규격의 `word_timestamps=True` 설정 시 `m_decompose_cross_attention_spda_ops` 실패. int8 OV 모델이 word-level alignment용 cross-attention 분해를 미지원.
+- **결정**: `return_timestamps=True`의 **segment 타임스탬프(`chunks[].start_ts/end_ts`)로 대체**. 발화별 독립 전사이므로 `condition_on_previous_text=False`와 동치이며, (speaker, text, start, end) 출력엔 충분. 또한 무음에 환각("MBC 뉴스…")이 발생함을 확인해 **VAD 게이팅 필수**를 도출.
+
+#### 🔍 이슈 8: pyannote 게이트 모델 접근 사가 (fine-grained 토큰 + community-1)
+- **상황**: pyannote 3.1은 HF 게이트 모델. 토큰을 받았으나 ① fine-grained 토큰 자체로는 메타데이터(200)는 보여도 파일은 403, ② 실제 원인은 `GatedRepo`("not in the authorized list") — 계정 약관 동의 미완. 동의 후엔 ③ pyannote.audio **4.x가 추가 게이트 모델 `speaker-diarization-community-1`** (4.x 임베딩/PLDA)을 끌어와 또 403.
+- **결정**: 응답 헤더(`x-error-code: GatedRepo`)로 원인을 정밀 진단. 사용자에게 segmentation-3.0 / speaker-diarization-3.1 / **community-1** 3종 약관 동의를 순차 안내하고 `HF_TOKEN`을 `setx`로 영구 등록. 토큰 부재 시 단일화자 graceful 동작하도록 설계해 게이트가 전체 파이프라인을 막지 않게 격리.
+
+#### 🔍 이슈 9: pyannote.audio 4.x 출력 API 변경
+- **상황**: `pipeline(...)` 결과에 `itertracks`가 없어 `AttributeError`. 4.x는 `Annotation` 직접 반환이 아니라 `DiarizeOutput` 래퍼를 반환.
+- **결정**: `getattr(out, "speaker_diarization", out)`로 4.x/구버전 모두 호환되게 Annotation을 추출. 토큰 인자도 `use_auth_token=`→`token=`(TypeError 폴백)로 대응. torchcodec(FFmpeg) DLL 미로드 경고는 waveform 직접 입력이라 무해 → 억제.
+
+#### 🔍 이슈 10: 라이브 발화 파편화 (VAD 튜닝)
+- **상황**: 실제 음성 라이브 테스트에서 첫 문장은 완벽 전사됐으나, 이후 말 중간 pause(0.6초 무음 endpoint)에서 발화가 "오픈 모델", "무디" 등으로 파편화. pyannote도 초단 발화에서 std/mean NaN 경고를 냄.
+- **결정**: endpoint 무음을 0.6→**1.0초**로 완화하고 `min_utt`를 0.6초로 올려 초단 파편을 폐기. 경고는 `warnings.catch_warnings`로 억제. 재테스트로 개선 확인.
+
+### 3. 교훈 (Lessons Learnt)
+- **Mock 통과 ≠ 동작 보장**: 36 passed였지만 실 구동에서 CLI 사양 변경·DB 잔존 스키마·셸 인자 훼손 등 Mock이 가리던 실 버그가 한꺼번에 드러남. 게이트(6-0 E2E)가 실엔진 착수 전 이 문제들을 잡아준 것이 결정적.
+- **Windows 셸 인자는 신뢰 금물**: 다중줄/특수문자 프롬프트는 STDIN으로 넘긴다. `shell=True`는 데드락뿐 아니라 줄바꿈 훼손의 원인.
+- **게이트 모델은 토큰·약관·전이 의존까지**: 토큰 유효성, 계정 약관 동의, 라이브러리 버전이 끌어오는 추가 게이트 모델(community-1)까지 3중으로 막힐 수 있음. 응답 헤더의 `x-error-code`로 정밀 진단이 빠름.
+- **무음 환각 → VAD는 선택이 아닌 필수**: Whisper는 무음에도 그럴듯한 문장을 환각하므로, 에너지 VAD 엔드포인팅으로 발화 구간만 전사하는 설계가 정확도의 핵심.
+
+### 4. 남은 과제 (다음 단계)
+- **전역 화자 일관성**: 현재 화자분리는 발화 단위 독립 실행이라 멀티 화자의 전역 라벨 일관성(spec의 `rho_update=0.1` 온라인 점증 클러스터링)은 미보장. 온라인 다이어리제이션(diart 등) 도입이 다음 리파인 대상.
+- **앱 통합 실측**: `stt_mock_mode=False`를 설정 UI에서 토글해 풀 앱(run.bat) 안에서의 실엔진 회의 흐름 육안 검증.

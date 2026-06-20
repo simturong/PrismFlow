@@ -1,13 +1,20 @@
+import os
 import base64
 import logging
+from pathlib import Path
 from PySide6.QtWidgets import QVBoxLayout
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from prismflow.ui_common.overlay import TranslucentOverlay
 from prismflow.agents.flow.mermaid_html import get_mermaid_html
 
 logger = logging.getLogger(__name__)
+
+# setHtml에 file:// baseUrl을 주어야 페이지 origin이 로컬 콘텐츠로 인식되어
+# `<script src="file:///.../mermaid.min.js">` 로컬 번들이 로드된다.
+# (baseUrl 없이 setHtml하면 origin이 about:blank가 되어 QWebEngine이 file:// 서브리소스를 차단)
+_RESOURCES_BASE_URL = QUrl.fromLocalFile(str(Path(__file__).parent / "resources") + os.sep)
 
 class FlowUI(TranslucentOverlay):
     """QWebEngineView를 탑재하여 오프라인 Mermaid.js 다이어그램을 동적으로 렌더링하는 투명 오버레이 GUI."""
@@ -30,13 +37,13 @@ class FlowUI(TranslucentOverlay):
         page = self.web_view.page()
         page.setBackgroundColor(Qt.transparent)
         
-        # HTML 로드
-        self.web_view.setHtml(get_mermaid_html())
+        # HTML 로드 (로컬 mermaid.min.js 로드를 위해 file:// baseUrl 지정)
+        self.web_view.setHtml(get_mermaid_html(), _RESOURCES_BASE_URL)
         layout.addWidget(self.web_view)
         
     def reset_diagram(self):
         """회의 종료 시 흐름도 오버레이를 초기 안내 화면으로 되돌립니다."""
-        self.web_view.setHtml(get_mermaid_html())
+        self.web_view.setHtml(get_mermaid_html(), _RESOURCES_BASE_URL)
 
     def update_diagram(self, mermaid_code: str):
         """새로운 Mermaid 코드를 수신하여 깜빡임 없이 동적으로 렌더링합니다.

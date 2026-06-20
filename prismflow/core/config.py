@@ -14,6 +14,16 @@ class AppConfig:
     stt_mock_mode: bool = True
     vad_threshold: float = 0.5
     audio_sample_rate: int = 16000
+
+    # STT 실엔진(OpenVINO Whisper + pyannote) 설정
+    # 로컬 가중치 우선 탐색 경로 (오프라인 배포 전제)
+    models_dir: str = field(default_factory=lambda: str(Path(__file__).resolve().parents[1] / "resources" / "models"))
+    # OpenVINO Whisper 모델 디렉토리명 (models_dir 하위)
+    whisper_model_name: str = "whisper-small-int8-ov"
+    # 추론 디바이스 선호: "AUTO"면 자동 감지(GPU→NPU→CPU), 또는 "GPU"/"NPU"/"CPU" 강제
+    stt_device: str = "AUTO"
+    # pyannote 화자분리 게이트 모델 다운로드용 Hugging Face 토큰 (없으면 환경변수 HF_TOKEN 사용)
+    hf_token: str = field(default_factory=lambda: os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "")
     
     # 보고서 저장 경로
     docs_save_dir: str = field(default_factory=lambda: str(Path.home() / "Documents" / "PrismFlow" / "Reports"))

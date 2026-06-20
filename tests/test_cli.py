@@ -9,6 +9,21 @@ def test_cli_controller_init():
     assert controller.config is not None
     assert controller.config.claude_cli_cmd == "claude"
 
+def test_normalize_session_id_passthrough_for_valid_uuid():
+    """이미 유효한 UUID는 그대로 통과시켜야 한다 (claude CLI 요구 충족)."""
+    u = str(uuid.uuid4())
+    assert ClaudeCLIController._normalize_session_id(u) == u
+
+def test_normalize_session_id_converts_semantic_name_deterministically():
+    """의미 기반 세션명을 결정적 UUID로 변환하여 resume 안정성을 보장한다."""
+    name = "chat-session-20260620_190019"
+    out = ClaudeCLIController._normalize_session_id(name)
+    # 유효 UUID여야 하고(claude CLI가 비-UUID 거부), 동일 입력은 항상 동일 UUID로 매핑되어야 함
+    uuid.UUID(out)  # 유효하지 않으면 ValueError
+    assert out == ClaudeCLIController._normalize_session_id(name)
+    # 서로 다른 에이전트 세션명은 서로 다른 UUID로 분리되어야 함
+    assert out != ClaudeCLIController._normalize_session_id("flow-session-20260620_190019")
+
 def test_cli_controller_execute_success():
     """실제 Claude CLI 호출 성공 테스트"""
     # 실제 환경의 claude CLI를 사용하기 위해 기본 설정 로드

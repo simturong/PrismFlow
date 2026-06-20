@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 REPORT_MODEL = "claude-opus-4-8"
 # Opus 모델 특성상 긴 회의록은 추론 시간이 길 수 있어 타임아웃을 넉넉히 둡니다.
 REPORT_TIMEOUT_SEC = 120
+# claude CLI를 코딩 에이전트가 아닌 "전문 회의 기록관"으로 동작시키기 위한 시스템 프롬프트.
+REPORT_SYSTEM_PROMPT = (
+    "당신은 전문 회의 기록관 및 비즈니스 분석가입니다. 제공된 회의 컨텍스트를 정밀 분석하여 "
+    "임원진 보고용 고품질 Markdown 회의록만 출력하십시오. 도구·파일 작업 없이 순수 Markdown 텍스트만 반환하십시오."
+)
 
 
 def _format_transcripts(transcripts: list) -> str:
@@ -112,6 +117,7 @@ class ReportWorker(QThread):
                 session_id=f"report-session-{self.session_id}",
                 model=REPORT_MODEL,
                 timeout=REPORT_TIMEOUT_SEC,
+                system_prompt=REPORT_SYSTEM_PROMPT,
             )
 
             if not report_content or not report_content.strip():

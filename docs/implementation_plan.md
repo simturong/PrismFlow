@@ -552,7 +552,7 @@ endlocal
 
 | 항목 | 작업 내용 |
 |:---|:---|
-| **6-0-A. 에이전트 모델명 실검증** | 로컬 `claude` CLI로 3개 에이전트 모델명을 실제 단발 호출하여 통과 여부 확인:<br/>- Chat/Flow: `claude-3-5-haiku` (구형 별칭 — 거부 가능성 있음)<br/>- Report: `claude-opus-4-8`<br/>- 거부 시 유효 별칭으로 교체(예: Haiku → `claude-haiku-4-5`)하고 `chat_agent.py`·`flow_agent.py`·`report_agent.py` 및 관련 테스트를 동기화<br/>- 검증: 실제 CLI 1회 응답 확인 (옵트인 마커 `@pytest.mark.live` 또는 수동 스모크) |
+| **6-0-A. 에이전트 모델명 실검증** | 로컬 `claude` CLI로 3개 에이전트 모델명을 실제 단발 호출하여 통과 여부 확인:<br/>- Chat/Flow: `claude-3-5-haiku` (구형 별칭 — 거부 가능성 있음)<br/>- Report: `claude-opus-4-8`<br/>- 거부 시 유효 별칭으로 교체(예: Haiku → `claude-haiku-4-5`)하고 `chat_agent.py`·`flow_agent.py`·`report_agent.py` 및 관련 테스트를 동기화<br/>- 검증: 실제 CLI 1회 응답 확인 (옵트인 마커 `@pytest.mark.live` 또는 수동 스모크)<br/><br/>**✅ 결과(2026-06-20, CLI v2.1.183):** `claude-3-5-haiku`는 **2026-02-19 retired**되어 거부(`exit=1`, "It may not exist or you may not have access to it"). `claude-opus-4-8`는 통과(PONG). 대체 별칭 `claude-haiku-4-5`도 통과(PONG) 확인. → **Flow/Chat을 `claude-haiku-4-5`로 교체**(Report는 `claude-opus-4-8` 유지). 동기화 파일: `flow_agent.py`, `chat_agent.py`(2곳), `cli_controller.py`(독스트링 예시), `tests/test_flow.py`(모델 인자 실검증으로 강화). `pytest tests/` → 36 passed. |
 | **6-0-B. run.bat E2E 1회 구동** | `run.bat` 실행 → 트레이 → **회의 시작 → Mock 발화 누적 → Flow 다이어그램 표출 → Chat Q&A → 회의 종료 → 보고서 자동 생성·팝업**까지 육안 확인.<br/>- Phase 5에서 수정한 회의 종료 크래시(`QWebEnginePage.html()` → `FlowUI.reset_diagram()`)가 실제로 막혔는지 포함 검증<br/>- 산출물: E2E 체크리스트 + 스크린샷, 발견 이슈 즉시 패치 |
 
 #### Phase 6-1: 실제 STT/화자분리 엔진 구현 (핵심)

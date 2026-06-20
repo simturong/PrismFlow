@@ -18,6 +18,8 @@ class RealTimeEngineWorker(QThread):
         # 실제 추론 모델 홀더 (OpenVINO 관련)
         self.whisper_model = None
         self.diarization_model = None
+        self._device = None
+        self._whisper_cfg = None
         
         # Mock 전용 주기 설정 (테스트 시 짧게 조정 가능하도록 config 확인 및 기본 15.0초 지정)
         self.mock_interval = getattr(self.config, "stt_mock_interval", 15.0)
@@ -90,74 +92,221 @@ class RealTimeEngineWorker(QThread):
             return
 
         try:
-            # diart 규격: 5.0초 윈도우, 0.5초 shift
-            sample_rate = self.config.audio_sample_rate
-            window_size = int(5.0 * sample_rate)
-            step_size = int(0.5 * sample_rate)
-            buffer = np.zeros(0, dtype=np.float32)
-            
-            # 상대 시작 시점 관리용
-            relative_start_time = 0.0
-
-            while self._running:
-                # 미팅이 활성화된 상태에서만 수집 및 추론 수행
-                if self.context.is_meeting_active:
-                    chunk = audio_cap.get_audio_chunk()
-                    if chunk is not None:
-                        buffer = np.append(buffer, chunk)
-                    
-                    # 5초 오디오 데이터가 쌓이면 추론 실행
-                    while len(buffer) >= window_size and self._running:
-                        window_data = buffer[:window_size]
-                        
-                        # OpenVINO 추론 연동 (Whisper & pyannote-openvino)
-                        speaker, text = self._process_inference(window_data)
-                        
-                        # 화자 분리 및 텍스트 캡처 완료 시 Context 적재
-                        if text:
-                            # 0.5초 간격으로 시프트하므로 상대 시각 기록
-                            # 여기서는 5초 윈도우 크기에 맞춰 발화 시각 할당
-                            self.context.add_transcript(
-                                speaker=speaker,
-                                text=text,
-                                start_time=relative_start_time,
-                                end_time=relative_start_time + 5.0
-                            )
-                        
-                        # 0.5초 시프트
-                        buffer = buffer[step_size:]
-                        relative_start_time += 0.5
-                else:
-                    # 미팅 비활성화 상태에서는 버퍼와 타임라인 리셋
-                    buffer = np.zeros(0, dtype=np.float32)
-                    relative_start_time = 0.0
-                    time.sleep(0.1)
-                
-                time.sleep(0.01)
+            self._run_vad_segmented_loop(audio_cap)
         finally:
             audio_cap.stop()
             self.status_changed.emit("idle")
 
-    def _load_openvino_models(self):
-        """OpenVINO GenAI 및 pyannote-openvino ONNX 런타임 가중치 로드 로직"""
-        try:
-            import openvino.runtime as ov
-        except ImportError:
-            raise ImportError("openvino 라이브러리가 설치되어 있지 않습니다.")
+    def _run_vad_segmented_loop(self, audio_cap):
+        """에너지 VAD 엔드포인팅으로 발화 단위를 분절하여 추론한다.
 
-        # Whisper 및 Pyannote 파라미터 강제 규격 제어 명시
-        # condition_on_previous_text = False
-        # language = "<|ko|>"
-        # word_timestamps = True
-        # duration = 5.0, step = 0.5, rho_update = 0.1
-        
-        # 실제 모델 경로 로드 시도
-        # 예: model = ov.Core().read_model(...)
-        # 가중치 파일이 없는 경우 FileNotFoundError 등을 발생시켜 예외 전파
-        pass
+        고정 5초 윈도우를 0.5초마다 재전사하는 방식은 동일 오디오를 10회 중복 전사하고
+        무음 구간까지 환각 전사하는 문제가 있다. 대신 발화(speech)가 끝나고 일정 시간
+        무음(endpoint)이 지속되면 그 발화 버퍼만 1회 전사하여 중복·환각·드리프트를 차단한다.
+        (6-2 안정화 항목인 vad_threshold 연동·버퍼/백프레셔 제어를 본 루프에 내장)
+        """
+        sr = self.config.audio_sample_rate
+
+        # config.vad_threshold(0~1)를 에너지(RMS) 게이트로 매핑. 0.5 → 0.005 (일반 발화/무음 분리 수준)
+        energy_gate = 0.01 * float(getattr(self.config, "vad_threshold", 0.5))
+        endpoint_samples = int(1.0 * sr)   # 발화 후 1.0초 무음이면 종료(문장 중간 pause 파편화 방지)
+        min_utt_samples = int(0.6 * sr)    # 0.6초 미만 발화는 잡음/초단 파편으로 간주해 폐기
+        max_utt_samples = int(20.0 * sr)   # 백프레셔: 20초 초과 발화는 강제 분절
+
+        utt = []                  # 현재 발화 버퍼(청크 리스트)
+        in_speech = False
+        silence_run = 0
+        speech_seen = False
+        abs_samples = 0           # 전체 타임라인 클럭(샘플 단위)
+        utt_start_sample = 0
+
+        def finalize():
+            nonlocal utt, in_speech, silence_run, speech_seen, utt_start_sample
+            if speech_seen and utt:
+                audio = np.concatenate(utt).astype(np.float32)
+                if len(audio) >= min_utt_samples:
+                    speaker, text = self._process_inference(audio)
+                    if text:
+                        self.context.add_transcript(
+                            speaker=speaker,
+                            text=text,
+                            start_time=round(utt_start_sample / sr, 2),
+                            end_time=round(abs_samples / sr, 2),
+                        )
+            utt = []
+            in_speech = False
+            silence_run = 0
+            speech_seen = False
+
+        while self._running:
+            if not self.context.is_meeting_active:
+                # 미팅 비활성화 시 버퍼/타임라인 리셋
+                utt = []
+                in_speech = False
+                silence_run = 0
+                speech_seen = False
+                abs_samples = 0
+                time.sleep(0.1)
+                continue
+
+            chunk = audio_cap.get_audio_chunk()
+            if chunk is None:
+                time.sleep(0.01)
+                continue
+
+            abs_samples += len(chunk)
+            rms = float(np.sqrt(np.mean(chunk ** 2))) if len(chunk) else 0.0
+            is_speech = rms >= energy_gate
+
+            if is_speech:
+                if not in_speech:
+                    in_speech = True
+                    utt_start_sample = abs_samples - len(chunk)
+                    utt = []
+                utt.append(chunk)
+                silence_run = 0
+                speech_seen = True
+                # 백프레셔: 발화가 과도하게 길어지면 강제 종료
+                if sum(len(c) for c in utt) >= max_utt_samples:
+                    finalize()
+            elif in_speech:
+                # 발화 중 무음: 트레일링 무음으로 포함하되 endpoint 판정
+                utt.append(chunk)
+                silence_run += len(chunk)
+                if silence_run >= endpoint_samples:
+                    finalize()
+
+        # 종료 시 미완료 발화 마무리
+        finalize()
+
+    def _detect_device(self) -> str:
+        """추론 디바이스 자동 감지: 설정 강제값 우선, 없으면 OpenVINO 가용 디바이스에서 GPU→CPU 선택.
+
+        (NVIDIA CUDA 경로는 별도 백엔드가 필요하며 본 환경/openvino-genai에서는 미지원이므로
+        Intel GPU(iGPU/Arc)→CPU 순으로 폴백한다. NPU는 Whisper 호환성 이슈로 기본 제외.)
+        """
+        forced = str(getattr(self.config, "stt_device", "AUTO") or "AUTO").upper()
+        try:
+            import openvino as ov
+            available = ov.Core().available_devices
+        except Exception:
+            available = []
+
+        if forced != "AUTO":
+            return forced if forced in available else "CPU"
+        if "GPU" in available:
+            return "GPU"
+        return "CPU"
+
+    def _load_openvino_models(self):
+        """OpenVINO Whisper(전사) + pyannote(화자분리) 가중치를 로컬 우선으로 로드한다.
+
+        - Whisper: `openvino_genai.WhisperPipeline`을 감지된 디바이스로 로드(실패 시 CPU 폴백).
+          추론 규격: language="<|ko|>", task="transcribe", return_timestamps=True.
+          (word_timestamps는 int8 OV 모델이 cross-attention 분해를 미지원하므로 segment
+          타임스탬프로 대체. 발화별 독립 전사이므로 condition_on_previous_text=False와 동치.)
+        - pyannote: HF 토큰이 있을 때만 로드하며, 없으면 단일 화자(Speaker_00)로 graceful 동작.
+        """
+        import os
+        try:
+            import openvino_genai as og
+        except ImportError:
+            raise ImportError("openvino-genai 라이브러리가 설치되어 있지 않습니다. requirements.txt를 확인하세요.")
+
+        model_dir = os.path.join(self.config.models_dir, self.config.whisper_model_name)
+        if not os.path.isdir(model_dir):
+            raise FileNotFoundError(
+                f"Whisper 모델 디렉토리를 찾을 수 없습니다: {model_dir}\n"
+                f"OpenVINO 변환 모델을 해당 경로에 배치하세요."
+            )
+
+        device = self._detect_device()
+        try:
+            self.whisper_model = og.WhisperPipeline(model_dir, device)
+        except Exception as e:
+            if device != "CPU":
+                # HW 가속 실패 시 CPU로 안전 폴백
+                self.whisper_model = og.WhisperPipeline(model_dir, "CPU")
+                device = "CPU"
+            else:
+                raise
+        self._device = device
+
+        cfg = self.whisper_model.get_generation_config()
+        cfg.language = "<|ko|>"
+        cfg.task = "transcribe"
+        cfg.return_timestamps = True
+        self._whisper_cfg = cfg
+
+        # pyannote 화자분리: 토큰이 있을 때만 시도(게이트 모델). 없으면 단일 화자로 동작.
+        self.diarization_model = None
+        self._load_diarization_if_available()
+
+    def _load_diarization_if_available(self):
+        """HF 토큰이 있고 pyannote가 설치된 경우에만 화자분리 파이프라인을 로드한다."""
+        token = getattr(self.config, "hf_token", "") or ""
+        if not token:
+            return
+        # waveform 텐서를 직접 입력하므로 torchcodec(FFmpeg) DLL 미로드 경고는 무해 → 억제
+        import warnings
+        warnings.filterwarnings("ignore", message=".*torchcodec.*")
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                from pyannote.audio import Pipeline
+        except ImportError:
+            return
+        try:
+            # pyannote.audio 4.x는 token= 인자를 사용(구버전은 use_auth_token=)
+            try:
+                self.diarization_model = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1", token=token
+                )
+            except TypeError:
+                self.diarization_model = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1", use_auth_token=token
+                )
+        except Exception as e:
+            # 토큰 무효/약관 미동의/네트워크 오류 등은 단일 화자 폴백으로 흡수
+            self.diarization_model = None
 
     def _process_inference(self, audio_window) -> tuple:
-        """OpenVINO Whisper 및 pyannote-openvino를 사용한 추론 처리 루틴"""
-        # 실제 추론 로직 적용
-        # 여기서는 placeholder이며, 모델 로드 완료 후 실행 가능
-        return "Speaker_00", ""
+        """발화 오디오(float32, 16kHz, mono)를 전사하고 화자를 식별해 (speaker, text)를 반환한다."""
+        text = ""
+        if self.whisper_model is not None:
+            try:
+                res = self.whisper_model.generate(audio_window, self._whisper_cfg)
+                text = str(res).strip()
+            except Exception as e:
+                self.error_occurred.emit(f"Whisper 추론 오류: {str(e)}")
+                return "Speaker_00", ""
+
+        speaker = "Speaker_00"
+        if text and self.diarization_model is not None:
+            speaker = self._diarize_dominant_speaker(audio_window)
+        return speaker, text
+
+    def _diarize_dominant_speaker(self, audio_window) -> str:
+        """발화 윈도우에서 가장 길게 말한 화자 라벨을 반환한다(없으면 Speaker_00)."""
+        try:
+            import torch, warnings
+            waveform = torch.from_numpy(np.ascontiguousarray(audio_window)).unsqueeze(0)
+            # 초단 발화에서 pyannote 내부 std/mean이 NaN 경고를 내는 경우가 있어 억제(결과엔 영향 없음)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                diarization = self.diarization_model(
+                    {"waveform": waveform, "sample_rate": self.config.audio_sample_rate}
+                )
+            # pyannote.audio 4.x는 DiarizeOutput.speaker_diarization(Annotation)을 반환,
+            # 구버전은 Annotation을 직접 반환하므로 모두 호환되게 처리한다.
+            annotation = getattr(diarization, "speaker_diarization", diarization)
+            durations = {}
+            for segment, _, label in annotation.itertracks(yield_label=True):
+                durations[label] = durations.get(label, 0.0) + segment.duration
+            if durations:
+                top = max(durations, key=durations.get)
+                # pyannote 라벨(SPEAKER_00)을 프로젝트 규격(Speaker_00)으로 정규화
+                return "Speaker_" + top.split("_")[-1]
+        except Exception:
+            pass
+        return "Speaker_00"

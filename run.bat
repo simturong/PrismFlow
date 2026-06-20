@@ -6,7 +6,7 @@ echo [PrismFlow] Activating virtual environment...
 if exist ".venv\Scripts\activate.bat" (
     call .venv\Scripts\activate.bat
 ) else (
-    echo [ERROR] Virtual environment (.venv) not found. Please run setup first.
+    echo [ERROR] Virtual environment .venv not found. Please run setup first.
     pause
     exit /b 1
 )

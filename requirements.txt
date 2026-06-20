@@ -11,3 +11,21 @@ PySide6_Essentials==6.11.1
 pytest==9.1.1
 pywin32==312
 shiboken6==6.11.1
+
+# ── Phase 6: STT/화자분리 실엔진 의존성 ─────────────────────────
+# 오디오 캡처 (16kHz/Mono/Float32 마이크 입력)
+PyAudio==0.2.14
+# OpenVINO 런타임 + GenAI Whisper 파이프라인 (Intel GPU/NPU/CPU 가속)
+openvino==2026.2.1
+openvino-genai==2026.2.1.0
+# 모델 가중치 다운로드(최초 1회) 및 오디오 유틸
+huggingface_hub==1.20.1
+librosa==0.11.0
+soundfile==0.14.0
+# 화자분리(diarization) — pyannote.audio 4.x. 게이트 모델 접근에 HF 토큰 필요.
+#   동의 필요 모델: pyannote/segmentation-3.0, pyannote/speaker-diarization-3.1,
+#                   pyannote/speaker-diarization-community-1 (4.x 임베딩/PLDA)
+#   런타임 토큰: 환경변수 HF_TOKEN (없으면 단일화자 graceful 동작)
+pyannote.audio==4.0.4
+torch==2.12.1
+torchaudio==2.11.0

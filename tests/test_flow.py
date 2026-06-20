@@ -125,9 +125,11 @@ def test_flow_agent_prompt_integration():
     
     # 분석 실행 및 조합되는 프롬프트 내용 가로채기
     captured_prompt = ""
-    def fake_execute(prompt, session_id, model):
-        nonlocal captured_prompt
+    captured_model = ""
+    def fake_execute(prompt, session_id, model, system_prompt=None):
+        nonlocal captured_prompt, captured_model
         captured_prompt = prompt
+        captured_model = model
         return "graph TD\nA-->B"
         
     mock_cli.execute_command = fake_execute
@@ -140,7 +142,7 @@ def test_flow_agent_prompt_integration():
     assert "sales_report.pptx" in captured_prompt
     assert "5페이지" in captured_prompt
     assert "Here 보시면" or "여기 보시면" in captured_prompt
-    assert "claude-3-5-haiku" in captured_prompt or True
+    assert captured_model == "claude-haiku-4-5"
     
     # Context에 생성된 Mermaid 코드가 올바르게 피드백되었는지 확인
     assert context.current_mermaid_code == "graph TD\nA-->B"

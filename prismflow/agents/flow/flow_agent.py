@@ -9,6 +9,13 @@ from prismflow.core.cli_controller import ClaudeCLIController
 
 logger = logging.getLogger(__name__)
 
+# claude CLI를 코딩 에이전트가 아닌 "Mermaid 흐름도 생성 엔진"으로 동작시키기 위한 시스템 프롬프트.
+FLOW_SYSTEM_PROMPT = (
+    "당신은 회의 발화를 분석해 Mermaid.js 흐름도를 생성하는 시각화 엔진입니다. "
+    "반드시 유효한 Mermaid flowchart 코드만 출력하십시오. 인사·설명·메타 문구 없이 "
+    "'graph TD' 또는 'flowchart TD'로 시작하는 코드만 반환하고, 도구·파일 작업을 하지 마십시오."
+)
+
 class FlowAgent(QThread):
     """30초 주기로 회의 발화를 분석하여 Mermaid.js 흐름도를 갱신하는 백그라운드 에이전트 QThread."""
     
@@ -125,7 +132,8 @@ class FlowAgent(QThread):
             response = self.cli_controller.execute_command(
                 prompt=prompt,
                 session_id=self.flow_session_id,
-                model="claude-3-5-haiku"
+                model="claude-haiku-4-5",
+                system_prompt=FLOW_SYSTEM_PROMPT
             )
             
             # 4. 결과 파싱 및 검증

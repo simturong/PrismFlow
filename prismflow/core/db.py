@@ -76,8 +76,44 @@ class DatabaseManager:
                             FOREIGN KEY (session_id) REFERENCES meeting_sessions(session_id) ON DELETE CASCADE
                         )
                     """)
+
+                    # 6. 레거시 스키마 마이그레이션
+                    #    CREATE TABLE IF NOT EXISTS는 기존 테이블의 컬럼을 갱신하지 못하므로,
+                    #    Phase 2 이전의 구 transcripts 스키마(단일 timestamp 컬럼)가 남아 있으면
+                    #    start_time/end_time 분리 스키마로 마이그레이션한다.
+                    self._migrate_legacy_transcripts(conn)
             finally:
                 conn.close()
+
+    def _migrate_legacy_transcripts(self, conn: sqlite3.Connection):
+        """구 transcripts 스키마(timestamp 단일 컬럼)를 start_time/end_time 스키마로 이관합니다.
+
+        기존 데이터는 timestamp 값을 start_time·end_time 양쪽에 매핑하여 보존하며,
+        이미 신 스키마이거나 테이블이 없으면 아무 작업도 하지 않습니다 (idempotent).
+        """
+        cols = [row[1] for row in conn.execute("PRAGMA table_info(transcripts)")]
+        if not cols or "start_time" in cols:
+            return  # 테이블 없음(신규 생성됨) 또는 이미 신 스키마
+
+        has_timestamp = "timestamp" in cols
+        conn.execute("ALTER TABLE transcripts RENAME TO transcripts_legacy")
+        conn.execute("""
+            CREATE TABLE transcripts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                speaker TEXT NOT NULL,
+                text TEXT NOT NULL,
+                start_time REAL NOT NULL,
+                end_time REAL NOT NULL,
+                FOREIGN KEY (session_id) REFERENCES meeting_sessions(session_id) ON DELETE CASCADE
+            )
+        """)
+        if has_timestamp:
+            conn.execute("""
+                INSERT INTO transcripts (id, session_id, speaker, text, start_time, end_time)
+                SELECT id, session_id, speaker, text, timestamp, timestamp FROM transcripts_legacy
+            """)
+        conn.execute("DROP TABLE transcripts_legacy")
 
     def create_session(self, session_id: str, title: str = "새로운 회의", start_time: str = None) -> bool:
         """새 회의 세션을 데이터베이스에 등록합니다."""

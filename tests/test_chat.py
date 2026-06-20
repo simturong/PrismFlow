@@ -84,7 +84,7 @@ def test_chat_agent_qna_and_unsubmitted_merge(temp_config):
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
     
-    def fake_stream(prompt, session_id, model):
+    def fake_stream(prompt, session_id, model, system_prompt=None):
         yield "이것은 "
         yield "답변"
         yield "입니다."
@@ -142,7 +142,7 @@ def test_chat_ui_integration(q_app, temp_config):
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
     
-    def fake_stream(prompt, session_id, model):
+    def fake_stream(prompt, session_id, model, system_prompt=None):
         yield "안녕"
         yield "하세요"
         

@@ -4,3 +4,6 @@ __pycache__/
 .pytest_cache/
 .agents/
 *.db
+
+# STT 모델 가중치 (대용량 다운로드 산출물 — Phase 7에서 별도 번들 배포)
+prismflow/resources/models/

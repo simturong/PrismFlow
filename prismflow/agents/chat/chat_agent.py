@@ -8,6 +8,14 @@ from prismflow.core.cli_controller import ClaudeCLIController
 
 logger = logging.getLogger(__name__)
 
+# claude CLI를 코딩 에이전트가 아닌 "회의 어시스턴트"로 동작시키기 위한 시스템 프롬프트.
+# (프로젝트 CLAUDE.md/메모리는 cli_controller의 격리 실행으로 차단되며, 이 프롬프트로 페르소나를 고정)
+CHAT_SYSTEM_PROMPT = (
+    "당신은 PrismFlow 회의 어시스턴트입니다. 회의 발화 맥락에만 근거하여 사용자 질문에 "
+    "한국어로 간결하고 정확하게 답하십시오. 코드 작업·파일 수정·도구 사용을 하지 말고 "
+    "텍스트로만 답하며, 회의에 없는 내용은 추측하지 마십시오."
+)
+
 class IngestWorker(QThread):
     """백그라운드에서 전사록을 Claude CLI 세션에 비동기 주입하는 스레드"""
     finished = Signal(int)
@@ -27,7 +35,8 @@ class IngestWorker(QThread):
                 self.cli_controller.execute_command(
                     prompt=self.prompt,
                     session_id=f"chat-session-{self.session_id}",
-                    model="claude-3-5-haiku"
+                    model="claude-haiku-4-5",
+                    system_prompt=CHAT_SYSTEM_PROMPT
                 )
             self.finished.emit(self.last_idx)
         except Exception as e:
@@ -55,7 +64,8 @@ class ChatQNAWorker(QThread):
                 generator = self.cli_controller.execute_command_stream(
                     prompt=self.prompt,
                     session_id=f"chat-session-{self.session_id}",
-                    model="claude-3-5-haiku"
+                    model="claude-haiku-4-5",
+                    system_prompt=CHAT_SYSTEM_PROMPT
                 )
                 for line in generator:
                     self.final_response += line

@@ -1,3 +1,4 @@
+import os
 import pytest
 import time
 from prismflow.core.context import MeetingContext
@@ -76,10 +77,14 @@ def test_stt_mock_mode_pipeline(q_app, mock_stt_config, monkeypatch):
     assert "idle" in status_history
 
 def test_stt_real_mode_error_fallback(q_app, mock_stt_config, monkeypatch):
-    """실제 모드 구동 시 라이브러리 부재나 장치 에러로 예외 발생 및 에러 시그널 전파 검증"""
+    """실제 모드 구동 시 모델 로드 실패가 error 시그널로 전파되고 스레드가 안전 종료되는지 검증.
+
+    (엔진/모델이 설치된 환경에서도 결정적으로 실패하도록 존재하지 않는 모델 경로를 강제한다.)
+    """
     mock_stt_config.stt_mock_mode = False
+    mock_stt_config.whisper_model_name = "definitely-nonexistent-model-xyz"
     monkeypatch.setattr(AppConfig, "load_default", lambda: mock_stt_config)
-    
+
     worker = RealTimeEngineWorker()
     
     error_msgs = []
@@ -107,4 +112,81 @@ def test_stt_real_mode_error_fallback(q_app, mock_stt_config, monkeypatch):
     assert len(error_msgs) > 0
     # 환경에 따라 라이브러리 미설치 에러 또는 오디오 장치 에러가 잡혀야 함
     assert any("실패" in msg or "없습니다" in msg or "오류" in msg for msg in error_msgs)
+
+
+def test_detect_device_respects_override(temp_config, monkeypatch):
+    """stt_device 강제 설정은 우선 적용되고, AUTO는 문자열 디바이스를 반환한다."""
+    monkeypatch.setattr(AppConfig, "load_default", lambda: temp_config)
+    worker = RealTimeEngineWorker()
+
+    temp_config.stt_device = "CPU"
+    assert worker._detect_device() == "CPU"
+
+    temp_config.stt_device = "AUTO"
+    dev = worker._detect_device()
+    assert isinstance(dev, str) and dev in ("GPU", "NPU", "CPU")
+
+
+def test_vad_segmentation_emits_single_utterance(q_app, temp_config, monkeypatch):
+    """에너지 VAD 루프: 발화(speech)+무음(endpoint)을 1개의 발화로 분절해 전사 적재하는지 검증.
+
+    실제 모델 없이 _process_inference를 모킹하여 VAD 분절/타임라인/적재 로직만 단위 검증한다.
+    """
+    import numpy as np
+    monkeypatch.setattr(AppConfig, "load_default", lambda: temp_config)
+
+    context = MeetingContext()
+    context.reset()
+    context.start_meeting("vad_sess", title="VAD 테스트")
+
+    worker = RealTimeEngineWorker()
+    # 전사 추론은 모킹 (화자/텍스트 고정)
+    worker._process_inference = lambda audio: ("Speaker_01", "테스트 발화입니다")
+
+    sr = temp_config.audio_sample_rate
+    frame = sr // 10  # 0.1초 프레임
+    loud = (np.ones(frame, dtype=np.float32) * 0.1)   # rms=0.1 > gate(0.005) → speech
+    quiet = np.zeros(frame, dtype=np.float32)          # rms=0 → silence
+    # 1.0초 발화 + 0.8초 무음(endpoint 0.6s 초과) → finalize 1회
+    script = [loud] * 10 + [quiet] * 8
+
+    class FakeCap:
+        def __init__(self, chunks):
+            self._chunks = list(chunks)
+        def get_audio_chunk(self):
+            if self._chunks:
+                return self._chunks.pop(0)
+            worker._running = False  # 스크립트 소진 시 루프 종료
+            return None
+        def stop(self):
+            pass
+
+    worker._running = True
+    worker._run_vad_segmented_loop(FakeCap(script))
+
+    assert len(context.transcripts) == 1
+    tr = context.transcripts[0]
+    assert tr["speaker"] == "Speaker_01"
+    assert tr["text"] == "테스트 발화입니다"
+    assert tr["start_time"] == 0.0
+    assert 1.0 <= tr["end_time"] <= 2.0  # 발화1.0s + 무음 endpoint(~0.6s) 구간
+
+    context.end_meeting()
+    context.reset()
+
+
+@pytest.mark.skipif(
+    not os.environ.get("STT_LIVE"),
+    reason="실엔진(OpenVINO Whisper) 옵트인 테스트 — STT_LIVE=1 환경에서만 실행",
+)
+def test_live_whisper_load_and_infer(temp_config, monkeypatch):
+    """[옵트인] 실제 OpenVINO Whisper 로드 + 추론 경로가 (speaker, text)를 반환하는지 검증."""
+    import numpy as np
+    monkeypatch.setattr(AppConfig, "load_default", lambda: temp_config)
+    worker = RealTimeEngineWorker()
+    worker._load_openvino_models()
+    assert worker.whisper_model is not None
+    spk, txt = worker._process_inference(np.zeros(int(3.0 * temp_config.audio_sample_rate), dtype=np.float32))
+    assert spk == "Speaker_00"
+    assert isinstance(txt, str)
 
