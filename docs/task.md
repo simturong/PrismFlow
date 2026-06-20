@@ -8,11 +8,11 @@
 - [x] `main.py` 진입점을 통한 트레이와 기본 오버레이 창 띄우기 통합 테스트
 
 ## Phase 2: SQLite DB 구축 및 실시간 STT 에뮬레이터 설계
-- [/] `prismflow/core/db.py` SQLite 데이터베이스 연결 및 스키마(회의 세션, 발화 내역, 설정 테이블) 설계
-- [/] `tests/test_db.py` DB CRUD 및 세션 로딩 테스트 작성 및 검증
-- [ ] `prismflow/core/context.py` 내 Thread-safe `MeetingContext` 싱글톤 클래스 구현 (DB 기록 연동)
-- [ ] `prismflow/agents/stt/stt_agent.py` 오디오 수집 스레드 및 Mock Mode 다자 발화 에뮬레이터 구현
-- [ ] `tests/test_stt.py` STT 스레드 및 데이터 파이프라인 검증 테스트 통과
+- [x] `prismflow/core/db.py` SQLite 데이터베이스 연결 및 스키마(회의 세션, 발화 내역, 설정 테이블) 설계
+- [x] `tests/test_db.py` DB CRUD 및 세션 로딩 테스트 작성 및 검증
+- [x] `prismflow/core/context.py` 내 Thread-safe `MeetingContext` 싱글톤 클래스 구현 (DB 기록 연동)
+- [x] `prismflow/agents/stt/stt_agent.py` 오디오 수집 스레드 및 Mock Mode 다자 발화 에뮬레이터 구현
+- [x] `tests/test_stt.py` STT 스레드 및 데이터 파이프라인 검증 테스트 통과
 
 ## Phase 3: Claude CLI 통신 및 Flow Agent Mermaid 시각화
 - [ ] `prismflow/core/cli_controller.py` 로컬 Claude CLI 파이프 비차단 IO 제어 모듈 개발

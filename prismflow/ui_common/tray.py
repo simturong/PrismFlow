@@ -1,0 +1,83 @@
+import sys
+from datetime import datetime
+from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QStyle, QApplication, QMessageBox
+from PySide6.QtGui import QAction, QIcon
+from prismflow.core.context import MeetingContext
+
+class SystemTrayManager(QSystemTrayIcon):
+    """
+    시스템 트레이 아이콘 및 우클릭 컨텍스트 메뉴를 관리합니다.
+    MeetingContext 싱글톤과 연동하여 회의 상태 전이에 따른 메뉴 활성화 상태를 조절합니다.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+        # 싱글톤 컨텍스트 획득
+        self.context = MeetingContext()
+        
+        # 시스템 기본 아이콘으로 초기 아이콘 설정 (SP_ComputerIcon)
+        self.default_icon = QApplication.style().standardIcon(QStyle.SP_ComputerIcon)
+        self.active_icon = QApplication.style().standardIcon(QStyle.SP_MediaPlay)
+        self.setIcon(self.default_icon)
+        self.setToolTip("PrismFlow AI Assistant")
+        
+        self.init_menu()
+        
+        # 컨텍스트 신호 연결
+        self.context.signals.meeting_started.connect(self._on_meeting_started)
+        self.context.signals.meeting_ended.connect(self._on_meeting_ended)
+
+    def init_menu(self):
+        self.menu = QMenu()
+        
+        self.start_action = QAction("회의 시작", self)
+        self.start_action.triggered.connect(self.start_meeting)
+        self.menu.addAction(self.start_action)
+        
+        self.end_action = QAction("회의 종료", self)
+        self.end_action.triggered.connect(self.end_meeting)
+        self.end_action.setEnabled(False)  # 초기에는 비활성화
+        self.menu.addAction(self.end_action)
+        
+        self.menu.addSeparator()
+        
+        self.settings_action = QAction("설정", self)
+        self.settings_action.triggered.connect(self.show_settings)
+        self.menu.addAction(self.settings_action)
+        
+        self.exit_action = QAction("종료", self)
+        self.exit_action.triggered.connect(self.exit_app)
+        self.menu.addAction(self.exit_action)
+        
+        self.setContextMenu(self.menu)
+
+    def start_meeting(self):
+        session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+        success = self.context.start_meeting(session_id)
+        if success:
+            self.showMessage("PrismFlow", f"회의가 시작되었습니다. (ID: {session_id})", QSystemTrayIcon.Information, 2000)
+            
+    def end_meeting(self):
+        success = self.context.end_meeting()
+        if success:
+            self.showMessage("PrismFlow", "회의가 종료되었습니다.", QSystemTrayIcon.Information, 2000)
+
+    def show_settings(self):
+        QMessageBox.information(None, "설정", "PrismFlow 설정 기능은 차후 구현될 예정입니다.")
+
+    def exit_app(self):
+        if self.context.is_meeting_active:
+            self.context.end_meeting()
+        # 트레이 아이콘 명시적 숨김 (종료 시 트레이 아이콘 잔상 방지)
+        self.hide()
+        QApplication.quit()
+
+    def _on_meeting_started(self, session_id: str):
+        self.start_action.setEnabled(False)
+        self.end_action.setEnabled(True)
+        self.setIcon(self.active_icon)
+
+    def _on_meeting_ended(self, session_id: str):
+        self.start_action.setEnabled(True)
+        self.end_action.setEnabled(False)
+        self.setIcon(self.default_icon)

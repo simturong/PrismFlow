@@ -266,18 +266,50 @@ E:\Tak\Gemini\PrismFlow\
 
 ---
 
-### Phase 3: Claude CLI 파이프 + Flow Agent + Mermaid 시각화
+### Phase 3: Claude CLI 파이프 + Flow Agent + Mermaid 시각화 & 스마트 화면 융합
 
 #### 개발 범위
 | 대상 파일 | 작업 내용 |
 |:---|:---|
 | `prismflow/core/cli_controller.py` | Popen 래퍼: 세션 생성, 비차단 stdout 읽기, 모델 지정 (`--model`) |
-| `prismflow/agents/flow/flow_agent.py` | 30초 슬라이딩 윈도우 → Claude Haiku 프롬프트 → Mermaid 코드 파싱 |
+| `prismflow/agents/flow/flow_agent.py` | 30초 슬라이딩 윈도우 → Claude Haiku 프롬프트 → Mermaid 코드 파싱<br/>- **Stateful Update**: 직전 Mermaid 코드를 함께 전송하여 기존 노드 구조 재사용(Upsert) 유도<br/>- **계층화/필터**: 대주제 서브그래프화, 잡담 노이즈 필터 및 흐름선 매핑 |
 | `prismflow/agents/flow/flow_ui.py` | QWebEngineView 투명 오버레이 + 동적 Mermaid 렌더링 |
 | `prismflow/agents/flow/mermaid_html.py` | 로컬 js 임베드 HTML 템플릿 생성기 |
 | `prismflow/agents/flow/resources/mermaid.min.js` | 오프라인용 라이브러리 다운로드 배치 |
+| `prismflow/core/screen_detector.py` [NEW] | **스마트 화면 맥락 감지**: PPT 슬라이드 감지(Office COM API) 및 범용 감지(32x32 초경량 픽셀 변화율 분석)<br/>- 30초 정착(Settled) 디바운스 및 가벼운 시각 지시어 매핑 적용 |
 | `tests/test_cli.py` | 파이프 데드락 검증, 타임아웃 처리, 모델 전환 |
-| `tests/test_flow.py` | Mermaid 코드 문법 유효성, 노드 재사용(Upsert) 검사 |
+| `tests/test_flow.py` | Mermaid 코드 문법 유효성, 노드 재사용(Upsert) 검사, 화면 전환 이벤트 연계 검증 |
+
+#### 상세 기술 설계 명세
+
+##### 1. Claude CLI 비차단 통신 (`cli_controller.py`)
+- **프로세스 관리**: `subprocess.Popen`을 활용하여 로컬 `claude` CLI를 기동하며, 표준 입력(`stdin`), 표준 출력(`stdout`), 표준 에러(`stderr`)를 모두 PIPE로 지정해 비차단 양방향 제어를 수행합니다.
+- **백그라운드 비차단 큐 읽기**:
+  - Windows의 파이프 대기 차단 문제를 회피하기 위해, 프로세스 기동 즉시 `stdout`과 `stderr`를 읽어내는 별도의 백그라운드 데몬 스레드를 실행합니다.
+  - 읽어온 줄 바꿈 단위의 응답 데이터는 `queue.Queue`에 실시간으로 보관하여, 메인 스레드가 `get_nowait()` 또는 `get(timeout=...)` 형태로 대기 없이 안전하게 꺼내 갈 수 있도록 구현합니다.
+- **세션 분리**: Flow 시각화 에이전트와 Chat 에이전트가 단일 CLI 상에서 명령어가 충돌하거나 락이 걸리지 않도록 각각의 Popen 프로세스를 격리된 별개의 세션 인스턴스로 분리 관리합니다.
+
+##### 2. 오프라인 Mermaid 시각화 UI (`flow_ui.py`, `mermaid_html.py`)
+- **오프라인 라이브러리 번들링**: 인터넷이 단절된 환경에서도 Mermaid 드로잉이 수행될 수 있도록 `mermaid.min.js`를 상대경로 리소스로 패키징하여 로드합니다.
+- **HTML 템플릿 및 스타일링**:
+  - `QWebEngineView`에 로드되는 기본 HTML 프레임에 다크 테마(Dark Mode HSL 컬러 팔레트) 및 반투명 유리 효과(Glassmorphism CSS)를 적용하여 심미성을 대폭 강화합니다.
+- **동적 렌더링**:
+  - 30초마다 새로운 Mermaid 코드 시그널이 도달하면 페이지를 새로고침(`reload`)하지 않고, QWebEngineView의 `page().runJavaScript()` API를 실행하여 자바스크립트 수준에서 `mermaid.render()` 함수를 동적으로 호출하여 깜빡임 없는 실시간 리렌더링을 구현합니다.
+
+##### 3. Flow Agent 분석 루프 및 스마트 화면 맥락 융합 (`flow_agent.py`, `screen_detector.py`)
+- **Stateful 점진적 다이어그램 업데이트**:
+  - 매 30초마다 Claude Haiku로 텍스트 요약을 요청할 때, **`[기존 Mermaid 코드]`**를 프롬프트에 동시 전달합니다.
+  - *"기존 노드들의 ID를 최대한 재사용(Upsert)하고 새로운 소주제 논의 사항은 꼬리에 덧붙여 나가라"*는 강한 제약을 주어 시각적 흐름의 연속성을 보존합니다.
+- **회의 논리 계층화**:
+  - 대주제는 Mermaid `subgraph`로 레이아웃을 묶어내며, 소소한 일상 잡담이나 추임새는 AI 프롬프트 필터링 정책에 의해 걸러집니다.
+- **스마트 화면 감지기 (ScreenTransitionDetector)**:
+  - **30초 정착(Settled) 디바운스**: 사용자가 슬라이드를 빠르게 훑는 동안은 캡처하지 않고, 화면 변화가 멈춘 지 최소 30초가 지나 완전히 고정(Settled) 되었을 때만 핵심 슬라이드로 인정하여 캡처 텍스트를 확정 큐에 넣습니다.
+  - **파워포인트 전체화면 감지**: Windows COM 인터페이스를 이용해 PPT 슬라이드 쇼 윈도우의 `SlideIndex` 번호를 읽어 전환 시점을 100% 추적합니다.
+  - **범용 화면 감지 폴백**: PPT가 아닐 경우 모니터 영역을 32x32 초소형 해상도로 주기적으로 캡처하고, 픽셀 변화율(MSE)이 임계값을 넘는 순간을 화면 이동으로 간주합니다.
+  - **중복 전송 방지 (Deduplication)**:
+    - PPT 화면: `ActivePresentation.Name` + `SlideIndex` 정보가 직전 확정 시점과 동일할 경우 분석 처리를 생략하고 패스(Skip)합니다.
+    - 범용 화면: 32x32 초소형 캡처본의 **지각적 해시(pHash)**를 비교하여 직전 확정 해시와 유사(해밍 거리 2 이하)할 경우 캡처 및 OCR 전송을 생략하고 패스(Skip)합니다.
+  - **시각 지시어 결합**: STT 발화 중 "여기 보시면", "이 슬라이드", "이 도표" 등 화면 지칭용 지시어가 가볍게 매칭되는 순간, 대기 중이던 확정 캡처 데이터를 결합하여 Claude CLI 측에 맥락 보조 자료로 제공합니다.
 
 #### ReAct 검증
 ```bash
