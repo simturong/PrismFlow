@@ -54,27 +54,29 @@ class TranslucentOverlay(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(4)
         
-        # 최소화 버튼
+        # 최소화 버튼 — Segoe MDL2 Assets \uE921 (ChromeMinimize)
         self.btn_minimize = QPushButton(self.control_widget)
         self.btn_minimize.setFixedSize(28, 20)
+        self.btn_minimize.setText("\uE921")
         self.btn_minimize.setToolTip("최소화")
         self.btn_minimize.clicked.connect(self.showMinimized)
         
-        # 최대화/복원 버튼
+        # 최대화/복원 버튼 — \uE922 (ChromeMaximize) / \uE923 (ChromeRestore)
         self.btn_maximize = QPushButton(self.control_widget)
         self.btn_maximize.setFixedSize(28, 20)
         self.btn_maximize.setToolTip("최대화")
         self.btn_maximize.clicked.connect(self.toggle_maximize)
         
-        # 닫기 버튼
+        # 닫기 버튼 — Segoe MDL2 Assets \uE8BB (ChromeClose)
         self.btn_close = QPushButton(self.control_widget)
         self.btn_close.setFixedSize(28, 20)
+        self.btn_close.setText("\uE8BB")
         self.btn_close.setToolTip("닫기")
         self.btn_close.clicked.connect(self.close)
         
-        # QSS 스타일 초기 적용 (윈도우 표준 플랫 스타일)
-        self.btn_minimize.setStyleSheet(self._button_style("#cbd5e1", "transparent", "rgba(255, 255, 255, 0.08)", "—"))
-        self.btn_close.setStyleSheet(self._button_style("#cbd5e1", "transparent", "#e81123", "✕"))
+        # QSS 스타일 초기 적용 (윈도우 표준 플랫 스타일, 고대비 색상)
+        self.btn_minimize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+        self.btn_close.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
         self._update_maximize_button_style()
         
         layout.addWidget(self.btn_minimize)
@@ -84,15 +86,15 @@ class TranslucentOverlay(QWidget):
         # 위젯 전체 크기 고정 (28 * 3 + 4 * 2 = 92)
         self.control_widget.setFixedSize(92, 20)
 
-    def _button_style(self, color, bg, hover_bg, text):
+    def _button_style(self, color, bg, hover_bg):
         return f"""
             QPushButton {{
                 background-color: {bg};
                 color: {color};
                 border: none;
                 border-radius: 0px;
-                font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 10px;
+                font-family: 'Segoe MDL2 Assets', 'Segoe UI Symbol', 'Segoe UI', Arial, sans-serif;
+                font-size: 9px;
                 font-weight: normal;
                 padding: 0px;
             }}
@@ -105,10 +107,12 @@ class TranslucentOverlay(QWidget):
     def _update_maximize_button_style(self):
         """최대화/복원 상태에 맞게 버튼 글자와 스타일을 갱신합니다."""
         if self.isMaximized():
-            self.btn_maximize.setStyleSheet(self._button_style("#cbd5e1", "transparent", "rgba(255, 255, 255, 0.08)", "❐"))
+            self.btn_maximize.setText("\uE923")  # ChromeRestore
+            self.btn_maximize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
             self.btn_maximize.setToolTip("이전 크기로 복원")
         else:
-            self.btn_maximize.setStyleSheet(self._button_style("#cbd5e1", "transparent", "rgba(255, 255, 255, 0.08)", "□"))
+            self.btn_maximize.setText("\uE922")  # ChromeMaximize
+            self.btn_maximize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
             self.btn_maximize.setToolTip("최대화")
 
     def toggle_maximize(self):
