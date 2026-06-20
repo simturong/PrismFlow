@@ -108,3 +108,13 @@ E:\Tak\Gemini\PrismFlow\
 3. **개발 히스토리 위키 작성 (`docs/history.md`)**:
    - **매 Phase 개발 단계가 완료될 때마다** [docs/history.md](file:///E:/Tak/Gemini/PrismFlow/docs/history.md)를 반드시 업데이트해야 합니다.
    - 업데이트 시 발생한 시행착오(Trial & Error), 대안 비교, 블로커 상황 및 교훈(Lesson Learnt)을 **스토리텔링** 형식으로 작성하여 보관하십시오.
+4. **실시간 Task 업데이트 (`docs/task.md`)**:
+   - **개발 진행 중 및 각 Phase 내 단계별 완료 시마다** [docs/task.md](file:///E:/Tak/Gemini/PrismFlow/docs/task.md)를 즉시 실시간으로 업데이트해야 합니다 (예: 진행 중 `[/]`, 완료 `[x]`).
+   - 전체 개발이 끝난 뒤 한꺼번에 업데이트하지 말고, 현재 진행 상황을 외부에서도 즉각 파악할 수 있도록 단계별 진행 즉시 상태를 갱신하십시오.
+5. **계획서 점진적 업데이트 (`docs/implementation_plan.md`)**:
+   - 구현 계획서를 업데이트할 때 **전체 마일스톤이나 타 Phase 계획을 덮어써서 삭제하지 마십시오**.
+   - 반드시 기존 계획 구조를 보존한 채로, 해당 Phase 영역에 세부 기술 설계 및 내용을 점진적으로 덧붙여야 합니다.
+   - **Phase 내 계획 수정이 이루어질 경우, 이에 종속성이 있는 다른 구성요소(예: `task.md`, `tests/` 구성, 관련 API 매핑 등)도 반드시 식별하여 동시 업데이트를 보장해야 합니다.**
+
+
+

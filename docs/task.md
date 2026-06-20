@@ -1,15 +1,15 @@
 # PrismFlow Task List
 
 ## Phase 1: 시스템 트레이 및 투명 오버레이 기본 GUI 구축
-- [ ] 패키지 루트 및 에이전트 슬라이스 디렉토리 구조 생성
-- [ ] `tests/conftest.py` 등 테스트 공통 모듈 및 모크 뼈대 생성
-- [ ] `prismflow/ui_common/overlay.py` 투명 오버레이 기본 클래스 설계 (Frameless, Translucent, Hover fade 애니메이션, 마우스 드래그 이동)
-- [ ] `prismflow/ui_common/tray.py` 시스템 트레이 및 우클릭 메뉴 구현 (회의 시작/종료, 설정, 종료 연동)
-- [ ] `main.py` 진입점을 통한 트레이와 기본 오버레이 창 띄우기 통합 테스트
+- [x] 패키지 루트 및 에이전트 슬라이스 디렉토리 구조 생성
+- [x] `tests/conftest.py` 등 테스트 공통 모듈 및 모크 뼈대 생성
+- [x] `prismflow/ui_common/overlay.py` 투명 오버레이 기본 클래스 설계 (Frameless, Translucent, Hover fade 애니메이션, 마우스 드래그 이동)
+- [x] `prismflow/ui_common/tray.py` 시스템 트레이 및 우클릭 메뉴 구현 (회의 시작/종료, 설정, 종료 연동)
+- [x] `main.py` 진입점을 통한 트레이와 기본 오버레이 창 띄우기 통합 테스트
 
 ## Phase 2: SQLite DB 구축 및 실시간 STT 에뮬레이터 설계
-- [ ] `prismflow/core/db.py` SQLite 데이터베이스 연결 및 스키마(회의 세션, 발화 내역, 설정 테이블) 설계
-- [ ] `tests/test_db.py` DB CRUD 및 세션 로딩 테스트 작성 및 검증
+- [/] `prismflow/core/db.py` SQLite 데이터베이스 연결 및 스키마(회의 세션, 발화 내역, 설정 테이블) 설계
+- [/] `tests/test_db.py` DB CRUD 및 세션 로딩 테스트 작성 및 검증
 - [ ] `prismflow/core/context.py` 내 Thread-safe `MeetingContext` 싱글톤 클래스 구현 (DB 기록 연동)
 - [ ] `prismflow/agents/stt/stt_agent.py` 오디오 수집 스레드 및 Mock Mode 다자 발화 에뮬레이터 구현
 - [ ] `tests/test_stt.py` STT 스레드 및 데이터 파이프라인 검증 테스트 통과
