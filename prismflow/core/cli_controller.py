@@ -202,7 +202,10 @@ class ClaudeCLIController:
         raise RuntimeError("Unknown error during Claude CLI execution.")
 
     def execute_command_stream(self, prompt: str, session_id: str, model: Optional[str] = None,
-                               system_prompt: Optional[str] = None):
+                               system_prompt: Optional[str] = None,
+                               allowed_tools: Optional[List[str]] = None,
+                               work_dir: Optional[str] = None,
+                               permission_mode: Optional[str] = None):
         """Claude CLI를 실행하여 스트리밍 출력을 generator로 반환합니다.
 
         Args:
@@ -210,6 +213,11 @@ class ClaudeCLIController:
             session_id (str): 대화 세션을 공유하기 위한 UUID 형식의 식별자
             model (str, optional): 사용할 Claude 모델
             system_prompt (str, optional): 기본(코딩 에이전트) 시스템 프롬프트를 대체할 에이전트 페르소나
+            allowed_tools (list[str], optional): 사전 승인할 도구 목록(--allowedTools). 지정 시 해당 도구는
+                비대화형(-p)에서도 권한 프롬프트 없이 실행된다. 미지정이면 기존처럼 도구 없는 순수 텍스트 응답.
+            work_dir (str, optional): 도구 작업 디렉토리 샌드박스. 지정 시 CLI를 이 경로에서 실행하고
+                --add-dir로 허용 디렉토리에 추가한다(파일 도구의 기본 경계).
+            permission_mode (str, optional): --permission-mode 값(예: 'acceptEdits').
 
         Yields:
             str: 실시간 출력 라인
@@ -218,6 +226,17 @@ class ClaudeCLIController:
         orig_session_id = session_id  # 디버그 로그용 원본 세션명(에이전트 식별)
         session_id = self._normalize_session_id(session_id)
         extra_args = self._build_extra_args(model, system_prompt)
+
+        # 도구 사용(범용 어시스턴트) 모드: 도구 화이트리스트 사전 승인 + 작업 폴더 샌드박스.
+        # 미지정 시(회의 Q&A 모드) 기존 동작과 100% 동일하다.
+        cwd = self._cli_cwd
+        if allowed_tools:
+            extra_args += ["--allowedTools"] + list(allowed_tools)
+        if work_dir:
+            extra_args += ["--add-dir", work_dir]
+            cwd = work_dir
+        if permission_mode:
+            extra_args += ["--permission-mode", permission_mode]
 
         # 세션 존재 여부 확인을 위해 가볍게 확인 (프로브이므로 시스템 프롬프트 없이 경량 인자만 적용)
         session_exists = False
@@ -261,7 +280,7 @@ class ClaudeCLIController:
                         encoding='utf-8',
                         errors='ignore',
                         shell=False,
-                        cwd=self._cli_cwd
+                        cwd=cwd
                     )
                     proc.stdin.write(prompt)
                     proc.stdin.close()

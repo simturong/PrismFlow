@@ -5,6 +5,7 @@ from typing import Optional
 from PySide6.QtCore import QObject, QThread, Signal
 from prismflow.core.context import MeetingContext
 from prismflow.core.cli_controller import ClaudeCLIController
+from prismflow.core.config import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -16,28 +17,68 @@ CHAT_SYSTEM_PROMPT = (
     "텍스트로만 답하며, 회의에 없는 내용은 추측하지 마십시오."
 )
 
+# 범용(도구 사용) 어시스턴트 모드의 페르소나. 웹 검색과 작업 폴더 내 파일 도구 사용을 허용한다.
+AGENT_SYSTEM_PROMPT = (
+    "당신은 PrismFlow의 범용 데스크톱 작업 어시스턴트입니다. 한국어로 답하며, 필요하면 "
+    "웹 검색(WebSearch)과 작업 폴더 내 파일 도구(읽기/쓰기/수정/이동)를 사용해 사용자의 일을 직접 수행하십시오. "
+    "파일 작업은 반드시 지정된 작업 폴더(작업 디렉토리) 안에서만 수행하고, 그 밖의 경로는 건드리지 마십시오. "
+    "작업을 마치면 무엇을 했는지 간결히 보고하십시오."
+)
+
+# 범용 모드에서 사전 승인할 도구 화이트리스트 (최소 권한). 파일 이동/복사는 작업 폴더 기준 상대 경로로 수행됨.
+AGENT_ALLOWED_TOOLS = [
+    "WebSearch", "Read", "Write", "Edit", "Glob", "Grep",
+    "Bash(mv:*)", "Bash(cp:*)", "Bash(mkdir:*)", "Bash(ls:*)",
+]
+# 범용 모드 모델: 도구 활용(웹·파일)이 잦으므로 Haiku보다 도구 추론이 강한 Sonnet을 사용.
+AGENT_MODEL = "claude-sonnet-4-6"
+CHAT_MODEL = "claude-haiku-4-5"
+
+# Chat Agent 동작 모드
+MODE_MEETING = "meeting"   # 회의 발화 기반 Q&A (도구 금지, 기본)
+MODE_AGENT = "agent"       # 범용 작업 (웹 검색 + 작업 폴더 내 파일 도구)
+
+
 class ChatQNAWorker(QThread):
-    """비동기 방식으로 Claude CLI를 실행하여 답변을 스트리밍하는 스레드"""
+    """비동기 방식으로 Claude CLI를 실행하여 답변을 스트리밍하는 스레드.
+
+    회의 Q&A 모드(기본)는 도구 없이 순수 텍스트로 답하고, 범용 모드는 도구 화이트리스트와
+    작업 폴더 샌드박스를 받아 웹 검색·파일 작업을 수행한다.
+    """
     token_delivered = Signal(str)
     finished = Signal(str)
     error = Signal(str)
-    
-    def __init__(self, cli_controller: ClaudeCLIController, prompt: str, session_id: str, cli_lock: threading.Lock):
+
+    def __init__(self, cli_controller: ClaudeCLIController, prompt: str, session_id: str, cli_lock: threading.Lock,
+                 system_prompt: str = CHAT_SYSTEM_PROMPT, model: str = CHAT_MODEL, session_prefix: str = "chat-session",
+                 allowed_tools=None, work_dir: Optional[str] = None, permission_mode: Optional[str] = None):
         super().__init__()
         self.cli_controller = cli_controller
         self.prompt = prompt
         self.session_id = session_id
         self.cli_lock = cli_lock
+        self.system_prompt = system_prompt
+        self.model = model
+        self.session_prefix = session_prefix
+        self.allowed_tools = allowed_tools
+        self.work_dir = work_dir
+        self.permission_mode = permission_mode
         self.final_response = ""
-        
+
     def run(self):
         try:
             with self.cli_lock:
+                # 회의 Q&A 모드에서는 도구 인자를 일절 전달하지 않아 기존 호출 시그니처를 100% 유지한다.
+                kwargs = {"model": self.model, "system_prompt": self.system_prompt}
+                if self.allowed_tools:
+                    kwargs["allowed_tools"] = self.allowed_tools
+                    kwargs["work_dir"] = self.work_dir
+                    if self.permission_mode:
+                        kwargs["permission_mode"] = self.permission_mode
                 generator = self.cli_controller.execute_command_stream(
                     prompt=self.prompt,
-                    session_id=f"chat-session-{self.session_id}",
-                    model="claude-haiku-4-5",
-                    system_prompt=CHAT_SYSTEM_PROMPT
+                    session_id=f"{self.session_prefix}-{self.session_id}",
+                    **kwargs
                 )
                 for line in generator:
                     self.final_response += line
@@ -71,6 +112,8 @@ class ChatAgent(QObject):
         self.last_ingested_idx = -1
         self.cli_lock = threading.Lock()
         self.active_workers = []
+        # 동작 모드 (회의 Q&A ↔ 범용 작업). UI 토글로 전환.
+        self.mode = MODE_MEETING
         
         # 컨텍스트 신호 연결
         self.context.signals.meeting_started.connect(self.on_meeting_started)
@@ -91,6 +134,23 @@ class ChatAgent(QObject):
         # 백그라운드 주입이 제거되었으므로 미팅 종료 시 추가 작업 없음
         pass
 
+    def set_mode(self, mode: str):
+        """동작 모드를 전환한다(MODE_MEETING ↔ MODE_AGENT)."""
+        if mode in (MODE_MEETING, MODE_AGENT):
+            self.mode = mode
+
+    def workspace_dir(self) -> str:
+        """범용 모드 파일 도구의 작업 폴더(샌드박스 경계)를 보장하고 경로를 반환한다."""
+        from pathlib import Path
+        config = getattr(self.cli_controller, "config", None) or AppConfig.load_default()
+        base = Path(config.db_path).parent  # 예: ~/Documents/PrismFlow
+        ws = base / "Workspace"
+        try:
+            ws.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            logger.warning(f"Failed to create workspace dir: {e}")
+        return str(ws)
+
     def ask_question(self, user_query: str):
         if not self.session_id:
             self.session_id = "default_session"
@@ -101,6 +161,11 @@ class ChatAgent(QObject):
         # 이미 완료된 Q&A 워커를 정리하여 active_workers 무한 누적을 방지합니다(질문이 반복돼도 상수 유지).
         # 아직 실행 중인 워커만 보존하므로 진행 중 스레드를 조기 회수해 크래시를 유발하지 않습니다.
         self.active_workers = [w for w in self.active_workers if w.isRunning()]
+
+        # 범용(도구 사용) 모드는 회의 맥락 주입 없이, 웹/파일 도구로 사용자 작업을 직접 수행한다.
+        if self.mode == MODE_AGENT:
+            self._ask_general(user_query)
+            return
 
         transcripts = self.context.transcripts
         max_idx = len(transcripts) - 1
@@ -180,6 +245,39 @@ class ChatAgent(QObject):
             
         worker.finished.connect(handle_success)
         worker.error.connect(handle_error)
+        worker.start()
+        self.active_workers.append(worker)
+
+    def _ask_general(self, user_query: str):
+        """범용 모드: 웹 검색 + 작업 폴더 내 파일 도구로 사용자의 작업을 직접 수행한다.
+
+        회의 발화 맥락을 주입하지 않고, 별도의 'agent-session-*' CLI 세션으로 회의 Q&A 페르소나와
+        분리한다. 범용 작업 결과는 회의 Q&A DB 로그에 적재하지 않는다.
+        """
+        # 사용량 한도 시 도구 호출 자체가 불가하므로 즉시 안내한다.
+        if self.cli_controller.is_session_limited():
+            self.finished.emit(
+                "⚠️ **[범용 작업 모드]** Claude CLI 사용량 한도로 도구 작업을 진행할 수 없습니다. "
+                "한도 해제 후 다시 시도해 주세요."
+            )
+            return
+
+        workspace = self.workspace_dir()
+        prompt = (
+            f"[작업 폴더]\n{workspace}\n"
+            "위 폴더를 작업 디렉토리로 사용하세요. 파일 읽기/쓰기/수정/이동은 반드시 이 폴더 안에서만 수행하세요.\n\n"
+            f"[사용자 요청]\n{user_query}"
+        )
+        logger.info(f"Sending general agent request to session agent-session-{self.session_id} (workspace={workspace})")
+
+        worker = ChatQNAWorker(
+            self.cli_controller, prompt, self.session_id, self.cli_lock,
+            system_prompt=AGENT_SYSTEM_PROMPT, model=AGENT_MODEL, session_prefix="agent-session",
+            allowed_tools=AGENT_ALLOWED_TOOLS, work_dir=workspace, permission_mode="acceptEdits",
+        )
+        worker.token_delivered.connect(self.token_delivered.emit)
+        worker.finished.connect(self.finished.emit)
+        worker.error.connect(self.error_occurred.emit)
         worker.start()
         self.active_workers.append(worker)
 

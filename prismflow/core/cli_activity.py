@@ -28,6 +28,8 @@ def agent_label_for_session(session_id) -> str:
         return "Chat"
     if s.startswith("report-session"):
         return "Report"
+    if s.startswith("agent-session"):
+        return "Agent"  # 범용(도구 사용) 어시스턴트 모드
     return "CLI"
 
 

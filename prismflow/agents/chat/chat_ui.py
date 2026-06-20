@@ -2,8 +2,8 @@ import html
 import re
 from typing import Optional
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextBrowser, 
-    QLineEdit, QPushButton, QFrame, QGraphicsOpacityEffect
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextBrowser,
+    QLineEdit, QPushButton, QFrame, QGraphicsOpacityEffect, QComboBox
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QAbstractAnimation, QEasingCurve
 from prismflow.ui_common.overlay import TranslucentOverlay
@@ -88,8 +88,9 @@ class ChatUI(TranslucentOverlay):
         layout.setContentsMargins(12, 32, 12, 12)
         layout.setSpacing(8)
         
-        # 2. 상단 타이틀바
+        # 2. 상단 타이틀바 ( 제목 + 모드 토글 )
         title_layout = QHBoxLayout()
+        title_layout.setSpacing(8)
         self.title_label = QLabel("PrismFlow Assistant", self)
         self.title_label.setStyleSheet("""
             color: #ffffff;
@@ -98,11 +99,38 @@ class ChatUI(TranslucentOverlay):
             font-family: 'Segoe UI', Arial, sans-serif;
             background: transparent;
         """)
-        
+
+        # 모드 토글: 회의 Q&A(도구 금지) ↔ 범용 작업(웹 검색 + 작업 폴더 파일 도구)
+        self.mode_combo = QComboBox(self)
+        self.mode_combo.addItems(["회의 Q&A", "범용 작업"])
+        self.mode_combo.setToolTip("회의 Q&A: 회의 발화 기반 답변(도구 없음)\n범용 작업: 웹 검색 + 작업 폴더 내 파일 도구 사용")
+        self.mode_combo.setStyleSheet("""
+            QComboBox {
+                background: rgba(30,30,40,200); color: #e2e8f0;
+                border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
+                padding: 2px 8px; font-size: 11px;
+            }
+            QComboBox::drop-down { border: none; width: 16px; }
+            QComboBox QAbstractItemView {
+                background: #1e1e26; color: #e2e8f0; selection-background-color: #7c4dff;
+            }
+        """)
+        self.mode_combo.currentTextChanged.connect(self.on_mode_changed)
+
         title_layout.addWidget(self.title_label)
+        title_layout.addWidget(self.mode_combo)
         title_layout.addStretch()
         layout.addLayout(title_layout)
-        
+
+        # 2-1. 회의정보 스트립 — 현재 세션/발화 수/녹음 상태를 한 줄로 표시 (코디네이터가 갱신)
+        self.meeting_info_label = QLabel("회의 정보: 대기 중 (회의가 시작되면 표시됩니다)", self)
+        self.meeting_info_label.setStyleSheet("""
+            color: #94a3b8; font-size: 11px; background: rgba(255,255,255,0.04);
+            border-radius: 6px; padding: 4px 8px;
+            font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+        """)
+        layout.addWidget(self.meeting_info_label)
+
         # 3. 중앙 대화 히스토리 (QTextBrowser)
         self.chat_history = QTextBrowser(self)
         self.chat_history.setOpenExternalLinks(True)
@@ -191,6 +219,30 @@ class ChatUI(TranslucentOverlay):
         self.agent.error_occurred.connect(self.on_error)
         self.agent.session_initialized.connect(self.on_session_initialized)
         
+    def on_mode_changed(self, label: str):
+        """모드 토글 변경 처리: 에이전트 모드를 바꾸고 안내 메시지를 표시한다."""
+        from prismflow.agents.chat.chat_agent import MODE_MEETING, MODE_AGENT
+        if label == "범용 작업":
+            self.agent.set_mode(MODE_AGENT)
+            try:
+                ws = self.agent.workspace_dir()
+            except Exception:
+                ws = "(작업 폴더)"
+            self.append_message(
+                "System",
+                f"범용 작업 모드로 전환했습니다. 웹 검색과 작업 폴더 내 파일(읽기/쓰기/수정/이동) 도구를 사용합니다. "
+                f"작업 폴더: {ws}"
+            )
+            self.input_field.setPlaceholderText("범용 작업 요청을 입력하세요 (웹 검색·파일 작업 가능)")
+        else:
+            self.agent.set_mode(MODE_MEETING)
+            self.append_message("System", "회의 Q&A 모드로 전환했습니다. 회의 발화 맥락에 근거해 답변합니다(도구 미사용).")
+            self.input_field.setPlaceholderText("메시지를 입력하세요... (Enter 전송)")
+
+    def set_meeting_info(self, text: str):
+        """회의정보 스트립을 갱신한다(코디네이터가 회의 시작/발화/종료 시 호출)."""
+        self.meeting_info_label.setText(text)
+
     def on_session_initialized(self):
         self.input_field.setEnabled(True)
         self.input_field.setPlaceholderText("메시지를 입력하세요... (Enter 전송)")

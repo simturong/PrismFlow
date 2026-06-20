@@ -21,6 +21,7 @@ _AGENT_COLORS = {
     "Flow": "#38bdf8",
     "Chat": "#a78bfa",
     "Report": "#f59e0b",
+    "Agent": "#34d399",
     "CLI": "#94a3b8",
 }
 # 디버그 표시용 프롬프트/응답 최대 길이(메모리·렌더 비용 상한)
@@ -51,7 +52,7 @@ class CliLogWindow(QWidget):
 
         toolbar.addWidget(self._dim_label("에이전트"))
         self.filter_combo = QComboBox(self)
-        self.filter_combo.addItems(["전체", "Flow", "Chat", "Report", "CLI"])
+        self.filter_combo.addItems(["전체", "Flow", "Chat", "Report", "Agent", "CLI"])
         self.filter_combo.currentTextChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self.filter_combo)
 

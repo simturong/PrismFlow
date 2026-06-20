@@ -37,6 +37,7 @@ class AppCoordinator:
         # 에이전트 상태 집계 허브 (Phase 10) — 모든 에이전트 상태를 한 곳에 모아 UI 뱃지로 배포
         self.status_hub = AgentStatusHub()
         self._transcript_count = 0
+        self._speakers = set()  # 회의정보 스트립용 화자 집계
 
         # UI 컴포넌트
         self.tray = SystemTrayManager()
@@ -101,8 +102,12 @@ class AppCoordinator:
         self.flow_ui.set_recording(True)
         self.chat_ui.set_recording(True)
 
-        # 에이전트 상태 초기화 (대시보드 뱃지)
+        # 회의정보 스트립 초기화 (PrismFlow Assistant 창)
         self._transcript_count = 0
+        self._speakers = set()
+        self.chat_ui.set_meeting_info(f"🟢 회의 중 · 세션 {session_id} · 발화 0 · 화자 0")
+
+        # 에이전트 상태 초기화 (대시보드 뱃지)
         self.status_hub.set_status("stt", AgentState.WORKING, "기동")
         self.status_hub.set_status("flow", AgentState.IDLE, "대기")
         self.status_hub.set_status("i2t", AgentState.WORKING, "감지중")
@@ -163,7 +168,12 @@ class AppCoordinator:
         self.flow_ui.add_transcript(speaker, text)
         # 확정 전사 산출 → STT 정상 동작 표시(누적 카운트는 O(1) 로컬 카운터로 집계)
         self._transcript_count += 1
+        self._speakers.add(speaker)
         self.status_hub.set_status("stt", AgentState.OK, f"전사 {self._transcript_count}")
+        # 회의정보 스트립 실시간 갱신 (세션·발화 수·화자 수)
+        self.chat_ui.set_meeting_info(
+            f"🟢 회의 중 · 세션 {self.context.current_session_id} · 발화 {self._transcript_count} · 화자 {len(self._speakers)}"
+        )
 
     def _on_screen_transition(self, ttype: str, info: object):
         logger.info(f"Screen transition detected: Type={ttype}, Info={info}")
@@ -200,6 +210,11 @@ class AppCoordinator:
         self.status_hub.set_status("i2t", AgentState.IDLE, "종료")
         # 최종 회의록은 ReportAgent가 동일 meeting_ended 신호로 비동기 컴파일 → '생성중' 표기
         self.status_hub.set_status("report", AgentState.WORKING, "생성중")
+
+        # 회의정보 스트립을 종료 상태로 갱신
+        self.chat_ui.set_meeting_info(
+            f"⚪ 회의 종료 · 세션 {session_id} · 발화 {self._transcript_count} · 화자 {len(self._speakers)} · 회의록 생성 중"
+        )
 
         # 흐름도 오버레이를 초기 안내 화면으로 리셋
         self.flow_ui.reset_diagram()
