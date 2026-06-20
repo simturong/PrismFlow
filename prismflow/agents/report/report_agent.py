@@ -263,13 +263,24 @@ class ReportAgent(QObject):
             self.active_workers.remove(worker)
 
     def cleanup(self):
-        """기동 중인 보고서 생성 워커들을 안전하게 종료 대기하고 시그널을 해제합니다."""
+        """기동 중인 보고서 생성 워커들을 안전하게 종료 대기하고 시그널을 해제합니다.
+
+        진행 중인 워커는 bounded wait로 합류를 시도하되, 시간 내 끝나지 않으면 참조를 유지한 채 둡니다.
+        (실행 중인 QThread의 파이썬 참조를 제거하면 GC가 'Destroyed while thread is still running' 크래시를
+        유발할 수 있으므로, 미완료 워커는 clear 대상에서 제외합니다. 정상 완료 시 finished 시그널로 자가 제거됩니다.)
+        """
         logger.info("Cleaning up ReportAgent resources...")
         try:
             self.context.signals.meeting_ended.disconnect(self._on_meeting_ended)
         except Exception:
             pass
+        still_running = []
         for worker in list(self.active_workers):
-            if worker.isRunning():
-                worker.wait(3000)
-        self.active_workers.clear()
+            try:
+                if worker.isRunning() and not worker.wait(3000):
+                    logger.warning(f"Report worker still running after wait; keeping reference to avoid unsafe teardown: {worker}")
+                    still_running.append(worker)
+            except Exception as e:
+                logger.warning(f"Error during report worker cleanup: {e}")
+        # 종료된 워커만 정리하고, 아직 실행 중인 워커는 참조를 유지(GC-중-실행 크래시 방지)
+        self.active_workers = still_running
