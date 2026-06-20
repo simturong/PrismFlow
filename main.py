@@ -109,8 +109,11 @@ class AppCoordinator:
         self.screen_detector.transition_detected.connect(self._on_screen_transition)
         self.screen_detector.start()
 
-        # 2. Flow Agent 기동 (30초마다 갱신) + 상태 가시화 신호 연결
-        self.flow_agent = FlowAgent(self.context, self.cli_controller, check_interval_sec=30.0)
+        # 2. Flow Agent 기동 + 상태 가시화 신호 연결
+        #    정기 갱신은 15초 주기, 단 직전 분석 이후 발화 3개 이상이 쌓이면(주제 전환 신호)
+        #    8초 바닥 간격만 지키면 주기를 기다리지 않고 즉시 흐름도를 갱신한다(실시간성↑, CLI 폭주 방지).
+        self.flow_agent = FlowAgent(self.context, self.cli_controller,
+                                    check_interval_sec=15.0, burst_threshold=3, min_interval_sec=8.0)
         self.flow_agent.diagram_updated.connect(self.flow_ui.update_diagram)
         self.flow_agent.analysis_started.connect(
             lambda: self.status_hub.set_status("flow", AgentState.WORKING, "생성중"))

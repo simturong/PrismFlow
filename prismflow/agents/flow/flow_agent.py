@@ -25,53 +25,78 @@ class FlowAgent(QThread):
     analysis_started = Signal()
     analysis_failed = Signal(str)
     
-    def __init__(self, context: MeetingContext, cli_controller: ClaudeCLIController, check_interval_sec: float = 30.0):
+    def __init__(self, context: MeetingContext, cli_controller: ClaudeCLIController, check_interval_sec: float = 30.0,
+                 burst_threshold: int = 3, min_interval_sec: float = 8.0):
         super().__init__()
         self.context = context
         self.cli_controller = cli_controller
+        # 정기 갱신 주기(상한). 이 시간이 지나면 새 발화가 1개라도 있으면 갱신한다.
         self.check_interval_sec = check_interval_sec
+        # 조기 갱신 트리거: 직전 분석 이후 발화가 이 개수 이상 쌓이면(=주제 전환 신호) 주기를 기다리지 않고 즉시 갱신.
+        self.burst_threshold = burst_threshold
+        # 조기 갱신의 최소 간격(바닥). CLI 호출 폭주를 막기 위한 하한선.
+        self.min_interval_sec = min_interval_sec
         self.running = False
-        
+
         # Flow Agent 전용 고유 세션 ID (매 회의마다 새로 생성)
         self.flow_session_id: Optional[str] = None
         self.last_analyzed_idx = -1
-        
+
     def run(self):
+        import time
         self.running = True
         logger.info("FlowAgent Thread started.")
-        
+
         # 회의 세션 기반으로 Flow 전용 CLI 세션 UUID 정의
         self.flow_session_id = f"flow-session-{self.context.current_session_id}"
-        
-        # 마지막 분석 시점의 발화 인덱스 기록 (회의 시작 시 리셋)
+
+        # 마지막 분석 시점의 발화 인덱스/카운트/시각 기록 (회의 시작 시 리셋)
         self.last_analyzed_idx = -1
-        
-        # 30초 대기를 정밀하게 처리하기 위한 누적 카운터 (100ms 단위)
-        wait_counter = 0
-        trigger_ticks = int(self.check_interval_sec * 10)
-        
+        last_analyzed_count = 0
+        last_analysis_t = 0.0  # 0.0 = 아직 한 번도 분석 안 함
+
         while self.running:
-            # 회의가 진행 중일 때만 주기적으로 분석
+            # 회의가 진행 중일 때만 분석. 폴링은 100ms로 촘촘히 돌되, 실제 CLI 호출은 아래 조건이 충족될 때만.
             if self.context.is_meeting_active:
-                if wait_counter >= trigger_ticks:
-                    wait_counter = 0
-                    
-                    transcripts = self.context.transcripts
-                    current_count = len(transcripts)
-                    
-                    # 새로운 발화가 추가되었거나 아직 다이어그램이 없는 경우에만 실행
-                    if current_count > 0 and (self.last_analyzed_idx < current_count - 1 or not self.context.current_mermaid_code):
+                transcripts = self.context.transcripts
+                count = len(transcripts)
+                if count > 0:
+                    now = time.monotonic()
+                    new_since = count - last_analyzed_count
+                    elapsed = (now - last_analysis_t) if last_analysis_t else float("inf")
+                    has_diagram = bool(self.context.current_mermaid_code)
+
+                    if self._should_trigger(new_since, elapsed, has_diagram):
                         self._analyze_and_update(transcripts)
-                else:
-                    wait_counter += 1
+                        last_analysis_t = time.monotonic()
+                        last_analyzed_count = count
             else:
                 # 회의 미작동 시 분석 대기 리셋
-                wait_counter = 0
+                last_analyzed_count = 0
+                last_analysis_t = 0.0
                 self.last_analyzed_idx = -1
-                
+
             self.msleep(100)  # 100ms 대기 (빠른 스레드 종료 대응)
-            
+
         logger.info("FlowAgent Thread stopped.")
+
+    def _should_trigger(self, new_since: int, elapsed: float, has_diagram: bool) -> bool:
+        """이번 폴링 틱에서 흐름도를 갱신(CLI 호출)할지 결정하는 순수 함수.
+
+        세 가지 트리거:
+          1) 최초 흐름도: 아직 다이어그램이 없으면 짧은 바닥(≤3초)만 지나도 가능한 한 빨리 띄운다.
+          2) 주제 전환(버스트): 직전 분석 이후 발화가 burst_threshold개 이상 쌓였고, CLI 폭주
+             방지 바닥(min_interval_sec, 단 정기 주기를 넘지 않음)을 지났으면 주기를 기다리지 않고 즉시.
+          3) 정기 캐치업: 정기 주기가 지났고 새 발화가 1개라도 있으면 갱신.
+        """
+        burst_floor = min(self.min_interval_sec, self.check_interval_sec)
+        if not has_diagram and elapsed >= min(self.check_interval_sec, 3.0):
+            return True
+        if new_since >= self.burst_threshold and elapsed >= burst_floor:
+            return True
+        if new_since >= 1 and elapsed >= self.check_interval_sec:
+            return True
+        return False
 
     def stop(self):
         """에이전트 루프를 안전하게 종료합니다."""

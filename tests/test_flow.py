@@ -106,6 +106,33 @@ def test_screen_detector_ppt_detection(mock_get_active, q_app):
         assert len(detected_events) == 1
         assert detected_events[0] == ("PPT", ("presentation1.pptx", 3))
 
+def test_flow_agent_trigger_cadence():
+    """FlowAgent 갱신 트리거 결정 로직 검증: 최초/주제전환(버스트)/정기 캐치업.
+
+    핵심 회귀 방어: 주제가 바뀌어 발화가 몰리면(버스트) 정기 주기(15초)를 기다리지 않고
+    훨씬 짧은 바닥 간격(8초)만 지나도 즉시 갱신되어 실시간성이 보장되어야 한다.
+    """
+    context = MeetingContext()
+    context.reset()
+    mock_cli = MagicMock()
+    agent = FlowAgent(context, mock_cli, check_interval_sec=15.0, burst_threshold=3, min_interval_sec=8.0)
+
+    # 1) 최초 흐름도: 다이어그램이 아직 없으면 3초 바닥만 지나도 즉시 띄운다.
+    assert agent._should_trigger(new_since=1, elapsed=3.0, has_diagram=False) is True
+    assert agent._should_trigger(new_since=1, elapsed=2.0, has_diagram=False) is False
+
+    # 2) 주제 전환(버스트): 발화 3개↑ + 8초 바닥 → 정기 15초 전이라도 즉시 갱신.
+    assert agent._should_trigger(new_since=3, elapsed=8.0, has_diagram=True) is True
+    assert agent._should_trigger(new_since=3, elapsed=7.9, has_diagram=True) is False  # 바닥 미달
+    assert agent._should_trigger(new_since=2, elapsed=12.0, has_diagram=True) is False  # 버스트 임계 미달
+
+    # 3) 정기 캐치업: 새 발화 1개라도 정기 주기 경과 시 갱신, 주기 전이면 보류.
+    assert agent._should_trigger(new_since=1, elapsed=15.0, has_diagram=True) is True
+    assert agent._should_trigger(new_since=1, elapsed=14.0, has_diagram=True) is False
+
+    context.reset()
+
+
 def test_flow_agent_prompt_integration():
     """FlowAgent 발화 내용 및 시각 지시어/화면 맥락 결합 프롬프트 전달 검증"""
     context = MeetingContext()

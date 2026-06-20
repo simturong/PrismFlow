@@ -106,7 +106,7 @@ def get_mermaid_html() -> str:
     <div id="diagram-container">
         <div style="text-align: center; color: #a0a0a0; font-size: 14px; letter-spacing: 1px;">
             <p>회의 발화 데이터를 수집하고 있습니다...</p>
-            <p style="font-size: 11px; color: #707070;">30초 주기로 흐름도가 동적 업데이트됩니다.</p>
+            <p style="font-size: 11px; color: #707070;">대화가 쌓이면 흐름도가 실시간으로 갱신됩니다.</p>
         </div>
     </div>
 </body>
