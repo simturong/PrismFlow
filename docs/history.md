@@ -16,7 +16,7 @@
 | **Phase 3: Flow & Mermaid 연동** | ✅ 완료 | 2026-06-20 | Claude CLI 비차단 파이프 연결 및 Mermaid 렌더링 검증 |
 | **Phase 4: Chat RAG & 질문 통합** | ✅ 완료 | 2026-06-20 | 최근 대화 context 주입 RAG 구현 및 비동기 스트리밍 연결 |
 | **Phase 4-3: 설정 및 화면로그 고도화** | ✅ 완료 | 2026-06-20 | 설정 GUI 다이얼로그, 화면 DB 적재, CLI 경로 오버라이드 및 폰트 로드 |
-| **Phase 5: Docs 정리 및 완성** | 대기 중 | - | Opus 활용 최종 markdown 회의록 자동 저장 및 실행 테스트 |
+| **Phase 5: Report Agent & 파이프라인 마무리** | ✅ 완료 | 2026-06-20 | Opus 4.8 최종 회의록 자동 생성/저장/실행, ReportAgent 명명 확정, run.bat 런처 |
 
 ---
 
@@ -28,7 +28,7 @@
   - **STT Agent**: 시간/화자/발화 데이터 누적 및 보정.
   - **Flow Agent**: 30초 단위 Mermaid.js 흐름도 투명 오버레이 표출 (Haiku 모델).
   - **Chat Agent**: 누적 대화 + 흐름 맥락 RAG 기반 실시간 응답 투명 오버레이 (Haiku 모델).
-  - **Docs Agent**: 회의 종료 시 Opus 모델로 구조화된 회의록 Markdown 저장 및 자동 실행.
+  - **Report Agent** (구 Docs/Synthesizer Agent): 회의 종료 시 Opus 4.8 모델로 구조화된 회의록 Markdown 저장 및 자동 실행.
 
 ### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
 
@@ -162,3 +162,32 @@
 #### 🔍 이슈 2: Config 초기화 시 DB 매니저 참조에 따른 순환 참조(Circular Dependency) 예외
 - **상황**: `AppConfig` 로딩 시점에 DB 내 `claude_cli_cmd` 오버라이드 값을 불러오기 위해 `DatabaseManager` 모듈을 임포트 및 인스턴스화하려 하자, `DatabaseManager` 역시 `AppConfig`를 사용하므로 악명 높은 파이썬 순환 참조 런타임 예외가 발생함.
 - **결정**: `AppConfig.__post_init__`에서 상위 `db.py` 라이브러리를 임포트하지 않고, 내부에서 직접 순수 `sqlite3.connect`를 단발성 기동하여 settings 테이블의 존재 여부 및 키-값 데이터를 초경량으로 직접 조회 및 주입하도록 아키텍처를 우회 설계해 순환 참조를 타파함.
+
+---
+
+## 🚀 Phase 5: Report Agent 및 전체 파이프라인 마무리 (2026-06-20)
+
+### 1. 주요 구현 내용
+- `ReportAgent` (QObject): `MeetingContext`의 `signals.meeting_ended`를 독립 구독하여, 회의가 끝나는 즉시 최종 회의록 컴파일을 자동 트리거하는 경량 오케스트레이터. 메인 스레드 시점에 `current_mermaid_code`를 선(先)캡처해 워커로 넘김으로써 `context.reset()`과의 레이스 컨디션을 차단함.
+- `ReportWorker` (QThread): 백그라운드에서 ① SQLite 발화록·채팅로그·세션 메타데이터 수집 → ② 최종 Mermaid 흐름도와 융합한 Opus 프롬프트 구성 → ③ `claude-opus-4-8` 단발 호출(타임아웃 120초) → ④ `Documents/PrismFlow/Reports/YYYY-MM-DD/report_{session_id}.md` UTF-8 저장 → ⑤ `meeting_sessions.summary` DB 영구 적재 → ⑥ `os.startfile` 자동 실행까지 한 호흡으로 수행.
+- `main.py` `AppCoordinator`: `ReportAgent`를 생성·연동하고 `report_generated`/`error_occurred` 시그널을 로깅에 연결했으며, 앱 종료 시 `cleanup()`에서 워커를 안전 대기 종료하도록 등록.
+- `run.bat`: `.venv` 활성화 후 `python main.py`를 원클릭 기동하고, 가상환경 부재 및 비정상 종료 시 `pause`로 콘솔을 잡아두는 Windows 통합 런처 작성.
+- `tests/test_report.py`: 프롬프트 병합·CLI 인자(모델/타임아웃)·날짜별 폴더 UTF-8 저장·DB summary 갱신·`os.startfile` 호출·빈 응답 예외·`meeting_ended` 배선까지 5개 케이스로 엄격 검증. 전체 회귀 `pytest tests/ -v` 결과 **36 passed**.
+
+### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
+
+#### 🔍 이슈 1: 추상적 명칭 `SynthesizerAgent`의 직관성 부족 → `ReportAgent`로 일괄 리네이밍
+- **상황**: 직전 세션에서 `DocsAgent`를 `SynthesizerAgent`로 개명했으나, "Synthesizer"가 실제 산출물(회의 보고서)을 직관적으로 드러내지 못해 코드 탐색·온보딩 시 인지 비용이 높다는 피드백이 제기됨.
+- **결정**: 산출물 자체를 가리키는 **`ReportAgent`/`ReportWorker`** 로 클래스명을 확정하고, 폴더(`agents/docs/` → `agents/report/`), 파일(`docs_agent.py` → `report_agent.py`), 테스트(`test_docs.py` → `test_report.py`)까지 트리 구조 전반과 `implementation_plan.md`·`task.md`·`history.md` 문서를 일괄 동기화함. 빈 껍데기로 남아 있던 `agents/docs/` 폴더는 깨끗이 제거함.
+
+#### 🔍 이슈 2: 보고서 모델을 구형 `claude-3-opus-20240229`에서 최신 Opus 4.8로 격상
+- **상황**: 최초 계획서는 회의록 생성 모델로 구형 별칭 `claude-3-opus-20240229`를 명시하고 있었으나, 최종 보고서는 회의 전체 맥락을 종합·구조화하는 가장 무거운 추론 작업이므로 품질을 최우선해야 함.
+- **결정**: 사용자 지시에 따라 추론 품질이 가장 높은 **`claude-opus-4-8`** 로 교체함. (Flow/Chat은 응답성이 중요해 Haiku 유지, Report만 Opus 4.8로 차등 적용하는 모델 분리 전략을 확정.)
+
+#### 🔍 이슈 3: `os.startfile` 자동 실행의 크로스 플랫폼 테스트 안전성
+- **상황**: 보고서 자동 팝업을 위한 `os.startfile`은 Windows 전용 API라, 타 플랫폼이나 CI에서 단위 테스트를 돌릴 때 `AttributeError`로 파이프라인 전체가 폭사할 위험이 있음.
+- **결정**: 실행부에 `sys.platform == 'win32' and hasattr(os, 'startfile')` 이중 가드를 씌우고, 테스트에서는 `patch(..., create=True)`로 속성을 안전 모킹하되 호출 단언은 win32에서만 수행하도록 분기함. 또한 `startfile` 실패 자체도 `try/except`로 흡수해, 뷰어 연동 오류가 보고서 생성 성공 자체를 무효화하지 않도록 분리함.
+
+#### 🔍 이슈 4: 회의 종료 시각(end_time) 이중 기록으로 인한 덮어쓰기 방지
+- **상황**: `MeetingContext.end_meeting()`이 이미 `end_session(session_id, end_time=...)`로 종료 시각을 기록한 뒤 `meeting_ended` 신호를 쏘는데, `ReportWorker`가 summary 저장을 위해 다시 `end_session(...)`을 호출하면서 `end_time`이 워커 실행 시점으로 잘못 덮어써질 우려가 있었음.
+- **결정**: 워커가 summary를 쓰기 전에 `get_session`으로 **원본 `end_time`을 읽어 그대로 재전달**하도록 설계하여, 실제 회의 종료 시각을 보존하면서 summary만 안전하게 갱신하도록 정렬함. (테스트에서 `end_time`이 원본 값으로 유지되는지 명시적으로 단언.)

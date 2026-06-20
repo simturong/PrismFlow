@@ -34,6 +34,10 @@ class FlowUI(TranslucentOverlay):
         self.web_view.setHtml(get_mermaid_html())
         layout.addWidget(self.web_view)
         
+    def reset_diagram(self):
+        """회의 종료 시 흐름도 오버레이를 초기 안내 화면으로 되돌립니다."""
+        self.web_view.setHtml(get_mermaid_html())
+
     def update_diagram(self, mermaid_code: str):
         """새로운 Mermaid 코드를 수신하여 깜빡임 없이 동적으로 렌더링합니다.
         

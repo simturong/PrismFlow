@@ -41,8 +41,38 @@
 - [x] 로컬 Pretendard 폰트 리소스 배치 및 `main.py` 내 전역 폰트 등록 연동
 - [x] `tests/test_db.py` 및 `tests/test_core.py`에 스키마 및 오버라이드 테스트 추가 검증
 
-## Phase 5: Docs Agent 문서 작성 및 전체 파이프라인 마무리
-- [ ] `prismflow/agents/docs/docs_agent.py` 최종 요약 Markdown 회의록 작성 모듈 구현
-- [ ] 요약 Markdown 문서 자동 저장(문서/PrismFlow/일자별폴더) 및 Windows 기본 연결 프로그램 연동
-- [ ] `run.bat` 원클릭 실행 스크립트 작성
-- [ ] 전체 연동 수동 시뮬레이션 및 최종 성능 최적화
+## Phase 5: Report Agent 회의록 작성 및 전체 파이프라인 마무리
+> 명칭 확정: `SynthesizerAgent` → **`ReportAgent`/`ReportWorker`** (폴더 `agents/report/`, 파일 `report_agent.py`, 테스트 `test_report.py`). 모델: **Opus 4.8 (`claude-opus-4-8`)**.
+- [x] `prismflow/agents/report/report_agent.py` 최종 회의록 Markdown 컴파일 모듈 구현 (`ReportAgent` + `ReportWorker`)
+- [x] DB(발화록·채팅·세션) + 최종 Mermaid 융합 Opus 프롬프트 구성 및 비동기 CLI 호출
+- [x] 회의록 자동 저장(`Documents/PrismFlow/Reports/YYYY-MM-DD/report_{session_id}.md`, UTF-8) 및 `meeting_sessions.summary` 영구 저장
+- [x] `os.startfile` 기반 Windows 기본 연결 프로그램 자동 실행 (`sys.platform=='win32'` 가드)
+- [x] `main.py` `AppCoordinator`에 `ReportAgent` 연동 및 cleanup 등록
+- [x] `tests/test_report.py` 작성 — 프롬프트 병합·파일 저장·DB summary·startfile 검증 (5 케이스)
+- [x] `run.bat` 원클릭 실행 스크립트 작성
+- [x] 전체 회귀 검증 통과 (`pytest tests/ -v` → 36 passed)
+
+### Phase 5 사후 감사 (Phase 6 진입 전)
+- [x] 회의 종료 크래시 수정: `QWebEnginePage.html()`(미존재 API) → `FlowUI.reset_diagram()` ([main.py], [flow_ui.py])
+- [ ] (→ Phase 6-0으로 이관) 에이전트 모델명 실검증 / run.bat E2E 1회 구동
+
+## Phase 6: 실제 오픈소스 STT/화자분리 모델 연동 및 실시간 검증
+> 착수 순서 고정: **6-0(Pre-flight 게이트) → 6-1(실엔진) → 6-2(안정화).** 6-0 통과 전 6-1 착수 금지.
+
+### Phase 6-0: MVP 실동작 게이트 (Pre-flight)
+- [ ] 6-0-A: `claude` CLI로 모델명 3종 실검증 (Chat/Flow `claude-3-5-haiku`, Report `claude-opus-4-8`) — 거부 시 유효 별칭 교체 및 코드/테스트 동기화
+- [ ] 6-0-B: `run.bat` E2E 1회 구동 (회의 시작→Mock 발화→Flow 표출→Chat Q&A→종료→보고서 팝업) 육안 확인 + 종료 크래시 수정 검증
+
+### Phase 6-1: 실제 STT/화자분리 엔진 구현
+- [ ] `stt_agent.py` `_load_openvino_models()` 실구현 (HW 자동감지 CUDA→OpenVINO/NPU→CPU 폴백, Whisper+pyannote 로드, 로컬 가중치 우선)
+- [ ] `stt_agent.py` `_process_inference()` 실구현 (5.0s 윈도우/0.5s 시프트, ko 강제, word_timestamps, diarization 규격) — 스텁 대체
+- [ ] `audio.py` 실제 마이크 캡처(16kHz/Mono/Float32) 동작 검증
+- [ ] `prismflow/resources/models/` 가중치 로컬 번들 배치 (pyannote 게이트 처리 또는 비게이트 대안 결정)
+- [ ] `requirements.txt`에 STT 의존성 추가 (openvino/openvino-genai, pyaudio·sounddevice, pyannote.audio/onnxruntime)
+
+### Phase 6-2: 실시간 안정화 및 예외 차단
+- [ ] 노이즈/무음 처리 + `config.vad_threshold` 연동
+- [ ] 버퍼 병목·타임라인 드리프트·백프레셔 제어
+- [ ] 하드웨어 가속 강제 제어 시 오류 → 안전 폴백
+- [ ] `stt_mock_mode=False` 실측: 실제 한국어 발화 → 전사·화자분리 정확도 육안 검증
+- [ ] `tests/test_stt.py` 확장 (HW감지/추론 인터페이스 단위 테스트, 실엔진 옵트인 마커 분리) + 전체 회귀 통과

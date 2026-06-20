@@ -13,6 +13,7 @@ from prismflow.agents.flow.flow_agent import FlowAgent
 from prismflow.agents.chat.chat_agent import ChatAgent
 from prismflow.agents.chat.chat_ui import ChatUI
 from prismflow.agents.stt.stt_agent import RealTimeEngineWorker
+from prismflow.agents.report.report_agent import ReportAgent
 
 # 로그 설정
 logging.basicConfig(
@@ -38,7 +39,12 @@ class AppCoordinator:
         # Chat Agent 및 UI 기동
         self.chat_agent = ChatAgent(self.context, self.cli_controller)
         self.chat_ui = ChatUI(self.chat_agent)
-        
+
+        # Report Agent 기동 (회의 종료 시 최종 회의록 자동 컴파일)
+        self.report_agent = ReportAgent(self.context, self.cli_controller)
+        self.report_agent.report_generated.connect(self._on_report_generated)
+        self.report_agent.error_occurred.connect(self._on_report_error)
+
         # 에이전트 및 검출기 홀더
         self.stt_worker = None
         self.flow_agent = None
@@ -102,14 +108,25 @@ class AppCoordinator:
             self.screen_detector.stop()
             self.screen_detector = None
             
-        # UI 초기 메시지 리셋
-        self.flow_ui.web_view.setHtml(self.flow_ui.web_view.page().html() or "")
+        # 흐름도 오버레이를 초기 안내 화면으로 리셋
+        self.flow_ui.reset_diagram()
+
+        # 참고: 최종 회의록 컴파일은 ReportAgent가 동일한 meeting_ended 신호를
+        # 독립 구독하여 백그라운드 워커로 처리하므로 여기서 별도 호출은 불필요합니다.
+
+    def _on_report_generated(self, filepath: str):
+        logger.info(f"Final meeting report generated and opened: {filepath}")
+
+    def _on_report_error(self, msg: str):
+        logger.error(f"Failed to generate final meeting report: {msg}")
 
     def cleanup(self):
         """프로그램 종료 시 백그라운드 리소스와 스레드를 안전하게 정리합니다."""
         logger.info("Cleaning up coordinator resources...")
         if self.chat_agent:
             self.chat_agent.cleanup()
+        if self.report_agent:
+            self.report_agent.cleanup()
         if self.stt_worker:
             try:
                 self.stt_worker.stop()

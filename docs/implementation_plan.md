@@ -1,8 +1,8 @@
 # PrismFlow 최종 구현 계획서
 
-> 본 문서는 PrismFlow 프로젝트의 **유일한 정본(Single Source of Truth)** 계획서입니다.
-> 프로젝트 디렉토리 내 `docs/implementation_plan.md`는 이 문서의 미러(Mirror)이며,
-> Phase 작업 진입 전 양쪽을 동기화하여 관리합니다.
+> 본 문서(`docs/implementation_plan.md`)는 PrismFlow 프로젝트 계획의 **유일한 정본(Single Source of Truth)** 입니다.
+> 별도의 미러나 복제본을 두지 않으며, 모든 Phase 설계 변경은 이 문서에 직접 점진적으로 반영합니다.
+> (`docs/task.md` 역시 진행률 상태판의 유일한 정본이며, `artifacts/`는 세션 handoff 문서 전용입니다.)
 
 ---
 
@@ -98,8 +98,8 @@ graph TD
             Chat_Agent["chat_agent.py<br/>RAG Q&A"]
             Chat_UI["chat_ui.py<br/>채팅 오버레이"]
         end
-        subgraph "agents/docs/"
-            Docs_Agent["docs_agent.py<br/>회의록 컴파일"]
+        subgraph "agents/report/"
+            Report_Agent["report_agent.py<br/>회의록 컴파일"]
         end
     end
 
@@ -109,11 +109,11 @@ graph TD
 
     Flow_Agent -->|"Haiku 세션"| CLI
     Chat_Agent -->|"Haiku 세션"| CLI
-    Docs_Agent -->|"Opus 세션"| CLI
+    Report_Agent -->|"Opus 세션"| CLI
 
     Context --> Flow_Agent
     Context --> Chat_Agent
-    Context --> Docs_Agent
+    Context --> Report_Agent
 
     CLI --> Flow_UI
     CLI --> Chat_UI
@@ -147,7 +147,7 @@ E:\Tak\Gemini\PrismFlow\
 │   ├── test_stt.py                 # Mock 발화 스트림 → MeetingContext 파이프라인 검증
 │   ├── test_flow.py                # Mermaid 코드 파싱, 노드 재사용(Upsert) 유효성 검사
 │   ├── test_chat.py                # RAG 컨텍스트 조립 (10분 발화 + Flow 요약 + Mermaid) 검증
-│   └── test_docs.py                # Markdown 최종 리포트 생성 및 파일 I/O 검증
+│   └── test_report.py              # Markdown 최종 리포트 생성 및 파일 I/O 검증
 │
 │   ── 메인 패키지 ─────────────────────────────────────────────
 └── prismflow/
@@ -185,9 +185,9 @@ E:\Tak\Gemini\PrismFlow\
         │   ├── chat_agent.py       #   QThread: RAG 컨텍스트 조립 → Claude Haiku → 스트리밍 응답
         │   └── chat_ui.py          #   입력창 + 대화 히스토리 투명 오버레이 (overlay.py 상속)
         │
-        └── docs/                   # ④ Docs 보고서 에이전트 슬라이스
+        └── report/                 # ④ Report 보고서 에이전트 슬라이스
             ├── __init__.py
-            └── docs_agent.py       #   Claude Opus → Markdown 컴파일 → 파일 저장 → 자동 실행
+            └── report_agent.py     #   Claude Opus → Markdown 컴파일 → 파일 저장 → 자동 실행
 ```
 
 ---
@@ -443,34 +443,38 @@ E:\Tak\Gemini\PrismFlow\
 
 ---
 
-### Phase 5: Synthesizer Agent (구 Docs Agent) + 최종 보고서 + 통합 최적화
+### Phase 5: Report Agent (구 Docs/Synthesizer Agent) + 최종 보고서 + 통합 최적화
+
+> **명칭 확정**: 추상적이던 `SynthesizerAgent` 대신, 산출물(보고서/리포트)을 직관적으로 드러내는 **`ReportAgent`** / **`ReportWorker`** 로 클래스·폴더·파일명·테스트·문서를 일괄 통일합니다. (폴더 `agents/report/`, 파일 `report_agent.py`, 테스트 `test_report.py`)
+> **모델 확정**: 최종 회의록은 추론 품질이 가장 높은 **Opus 4.8 (`claude-opus-4-8`)** 모델로 단발 생성합니다.
 
 #### 개발 범위
 | 대상 파일 | 작업 내용 |
 |:---|:---|
-| `prismflow/agents/docs/__init__.py` [NEW] | SynthesizerAgent 모듈 진입점 제공 |
-| `prismflow/agents/docs/docs_agent.py` [NEW] | `SynthesizerAgent` (QObject) 및 `SynthesizerWorker` (QThread) 구현:<br/>- `signals.meeting_ended` 구독 및 세션 종료 자동 감지<br/>- SQLite DB에서 회의 정보, 전체 발화록(`transcripts`), 채팅 히스토리(`chat_logs`) 추출<br/>- `MeetingContext`에서 최종 Mermaid 흐름도 추출<br/>- Claude Opus (`claude-3-opus-20240229`)용 단발 프롬프트 구성 및 비동기 CLI 호출<br/>- Markdown 포맷 회의록 컴파일 (회의 요약 + 아젠다 쟁점 + 최종 Mermaid 소스 + Todo 리스트)<br/>- `%USERPROFILE%\Documents\PrismFlow\Reports\YYYY-MM-DD\` 경로 하위에 `report_{session_id}.md` 파일 실시간 저장<br/>- SQLite `meeting_sessions.summary` 컬럼에 보고서 본문 영구 저장 업데이트<br/>- `os.startfile`을 이용한 Windows 기본 연결 프로그램 자동 실행 및 타 플랫폼 예외 방어 |
-| `main.py` | `AppCoordinator`에 `SynthesizerAgent` 인스턴스 연동 및 `signals.meeting_ended` 발생 시 보고서 컴파일 흐름 연결 |
+| `prismflow/agents/report/__init__.py` [NEW] | ReportAgent 모듈 진입점 제공 |
+| `prismflow/agents/report/report_agent.py` [NEW] | `ReportAgent` (QObject) 및 `ReportWorker` (QThread) 구현:<br/>- `signals.meeting_ended` 구독 및 세션 종료 자동 감지<br/>- SQLite DB에서 회의 정보, 전체 발화록(`transcripts`), 채팅 히스토리(`chat_logs`) 추출<br/>- `MeetingContext`에서 최종 Mermaid 흐름도 추출<br/>- Claude Opus 4.8 (`claude-opus-4-8`)용 단발 프롬프트 구성 및 비동기 CLI 호출<br/>- Markdown 포맷 회의록 컴파일 (회의 요약 + 아젠다 쟁점 + 최종 Mermaid 소스 + Todo 리스트)<br/>- `%USERPROFILE%\Documents\PrismFlow\Reports\YYYY-MM-DD\` 경로 하위에 `report_{session_id}.md` 파일 실시간 저장<br/>- SQLite `meeting_sessions.summary` 컬럼에 보고서 본문 영구 저장 업데이트<br/>- `os.startfile`을 이용한 Windows 기본 연결 프로그램 자동 실행 및 타 플랫폼 예외 방어 |
+| `main.py` | `AppCoordinator`에 `ReportAgent` 인스턴스 연동 및 `signals.meeting_ended` 발생 시 보고서 컴파일 흐름 연결 |
 | `run.bat` [NEW] | Windows 원클릭 통합 실행 스크립트 작성 (가상환경 활성화 및 `python main.py` 실행) |
-| `tests/test_docs.py` [NEW] | SynthesizerAgent 최종 보고서 생성 검증:<br/>- SQLite DB 적재 데이터 및 최종 Mermaid 코드가 올바르게 병합된 프롬프트 구성 확인<br/>- `ClaudeCLIController` Mocking을 통한 Claude Opus 응답 생성 검증<br/>- 임시 디렉토리 하위의 `YYYY-MM-DD` 날짜별 폴더 구조 생성 및 Markdown 파일 인코딩(UTF-8) 저장 검증<br/>- DB의 `meeting_sessions` 테이블 내 `summary` 필드 업데이트 여부 확인<br/>- `os.startfile` 모크 호출 횟수 및 인자 검증 |
+| `tests/test_report.py` [NEW] | ReportAgent 최종 보고서 생성 검증:<br/>- SQLite DB 적재 데이터 및 최종 Mermaid 코드가 올바르게 병합된 프롬프트 구성 확인<br/>- `ClaudeCLIController` Mocking을 통한 Claude Opus 응답 생성 검증<br/>- 임시 디렉토리 하위의 `YYYY-MM-DD` 날짜별 폴더 구조 생성 및 Markdown 파일 인코딩(UTF-8) 저장 검증<br/>- DB의 `meeting_sessions` 테이블 내 `summary` 필드 업데이트 여부 확인<br/>- `os.startfile` 모크 호출 횟수 및 인자 검증 |
 
 #### 상세 기술 설계 명세
 
-##### 1. Synthesizer Agent 데이터 융합 및 비동기 생성 스레드 (`docs_agent.py`)
+##### 1. Report Agent 데이터 융합 및 비동기 생성 스레드 (`report_agent.py`)
 - **회의 종료 감지 및 스레드 가동**:
-  - `SynthesizerAgent`는 `MeetingContext` 인스턴스의 `signals.meeting_ended` 시그널에 `_on_meeting_ended` 메소드를 바인딩합니다.
-  - 해당 시그널이 도달하면 전달받은 `session_id`를 기반으로 `SynthesizerWorker` (QThread) 인스턴스를 동적으로 생성 및 시작하여 백그라운드에서 보고서를 생성하도록 합니다. 이를 통해 회의 종료 시 발생할 수 있는 UI 스레드 멈춤 현상을 원천 방지합니다.
+  - `ReportAgent`는 `MeetingContext` 인스턴스의 `signals.meeting_ended` 시그널에 `_on_meeting_ended` 메소드를 바인딩합니다.
+  - 해당 시그널이 도달하면 전달받은 `session_id`를 기반으로 `ReportWorker` (QThread) 인스턴스를 동적으로 생성 및 시작하여 백그라운드에서 보고서를 생성하도록 합니다. 이를 통해 회의 종료 시 발생할 수 있는 UI 스레드 멈춤 현상을 원천 방지합니다.
+  - 슬롯 진입 시점(메인 스레드)에 `context.current_mermaid_code`를 캡처하여 워커에 전달함으로써, 이후 `context.reset()` 호출과의 레이스 컨디션을 방지합니다.
 - **SQLite DB 데이터 수집**:
-  - `SynthesizerWorker` 내에서 `db_manager.get_session(session_id)`를 호출해 회의 메타데이터(회의 제목 `title`, 시작 시간 `start_time`, 종료 시간 `end_time`)를 로드합니다.
+  - `ReportWorker` 내에서 `db_manager.get_session(session_id)`를 호출해 회의 메타데이터(회의 제목 `title`, 시작 시간 `start_time`, 종료 시간 `end_time`)를 로드합니다.
   - `db_manager.get_transcripts(session_id)`를 통해 회의 시작부터 종료까지 누적된 모든 화자별 발화 목록을 가져옵니다.
   - `db_manager.get_chat_logs(session_id)`를 통해 회의 중 사용자와 어시스턴트 사이에 주고받은 Q&A 채팅 로그 목록을 로드합니다.
   - `context.current_mermaid_code`를 읽어 최종 시각화 Mermaid 흐름도를 가져옵니다.
 - **Claude Opus 정밀 보고서 프롬프트 설계**:
-  - 수집된 모든 자료를 유기적으로 조합하여 하나의 컨텍스트로 구성하고, Claude Opus (`claude-3-opus-20240229`) 모델에 전달할 프롬프트를 빌드합니다.
+  - 수집된 모든 자료를 유기적으로 조합하여 하나의 컨텍스트로 구성하고, Claude Opus 4.8 (`claude-opus-4-8`) 모델에 전달할 프롬프트를 빌드합니다.
   - **프롬프트 템플릿 구조**:
     ```text
     [시스템 역할]
-    당신은 PrismFlow 프로젝트의 전문 회의 기록관 및 비즈니스 분석가(Synthesizer)입니다. 제공된 회의 컨텍스트(STT 발화문, 채팅 히스토리, Mermaid 흐름도)를 정밀 분석하여 임원진 보고용 고품질 Markdown 회의록을 작성하십시오.
+    당신은 PrismFlow 프로젝트의 전문 회의 기록관 및 비즈니스 분석가입니다. 제공된 회의 컨텍스트(STT 발화문, 채팅 히스토리, Mermaid 흐름도)를 정밀 분석하여 임원진 보고용 고품질 Markdown 회의록을 작성하십시오.
 
     [회의 기본 정보]
     - 세션 ID: {session_id}
@@ -494,7 +498,7 @@ E:\Tak\Gemini\PrismFlow\
     5. 서론, 결론, 혹은 "알겠습니다. 작성해 드리겠습니다"와 같은 AI의 불필요한 메타 설명 문구는 제외하고, 오직 순수한 Markdown 내용만 반환하십시오.
     ```
 - **Claude CLI 단발 실행**:
-  - `cli_controller.execute_command(prompt, session_id, model="claude-3-opus-20240229", timeout=120)`를 수행합니다. 
+  - `cli_controller.execute_command(prompt, session_id="report-session-{session_id}", model="claude-opus-4-8", timeout=120)`를 수행합니다.
   - Opus 모델 특성상 긴 회의록의 경우 추론 시간이 오래 소요될 수 있으므로 타임아웃 값을 120초로 넉넉하게 지정합니다.
 - **날짜별 폴더 구조 저장 및 DB 동기화**:
   - 오늘 날짜에 해당하는 `YYYY-MM-DD` 형식의 폴더를 `%USERPROFILE%\Documents\PrismFlow\Reports\` 하위에 생성합니다. (예: `C:\Users\sando\Documents\PrismFlow\Reports\2026-06-20\`)
@@ -531,9 +535,53 @@ endlocal
 
 #### ReAct 검증
 ```bash
-.venv\Scripts\python -m pytest tests/test_docs.py -v
+.venv\Scripts\python -m pytest tests/test_report.py -v
 .venv\Scripts\python -m pytest tests/ -v
 ```
+
+---
+
+### Phase 6: 실제 오픈소스 STT/화자분리 모델 연동 및 실시간 검증
+
+> Mock 모드로 완성된 4-에이전트 파이프라인 위에, `stt_agent.py`의 스텁(`_load_openvino_models` / `_process_inference`)을 실제 OpenVINO Whisper + pyannote 화자분리 엔진으로 교체하여 **진짜 마이크 입력으로 동작하는 MVP**를 완성하는 단계.
+> **착수 순서 고정: 6-0(Pre-flight 게이트) → 6-1(실엔진) → 6-2(안정화).** 6-0을 통과하지 못하면 6-1 착수 금지.
+
+#### Phase 6-0: MVP 실동작 게이트 (Pre-flight) — STT 코드 수정 전 선행
+
+실제 STT 모델을 얹기 전에, **현재 Mock 기반 MVP가 실제로 구동되는지부터 증명**한다. (Phase 5 감사에서 도출된 필수 선결 항목 #2·#5)
+
+| 항목 | 작업 내용 |
+|:---|:---|
+| **6-0-A. 에이전트 모델명 실검증** | 로컬 `claude` CLI로 3개 에이전트 모델명을 실제 단발 호출하여 통과 여부 확인:<br/>- Chat/Flow: `claude-3-5-haiku` (구형 별칭 — 거부 가능성 있음)<br/>- Report: `claude-opus-4-8`<br/>- 거부 시 유효 별칭으로 교체(예: Haiku → `claude-haiku-4-5`)하고 `chat_agent.py`·`flow_agent.py`·`report_agent.py` 및 관련 테스트를 동기화<br/>- 검증: 실제 CLI 1회 응답 확인 (옵트인 마커 `@pytest.mark.live` 또는 수동 스모크) |
+| **6-0-B. run.bat E2E 1회 구동** | `run.bat` 실행 → 트레이 → **회의 시작 → Mock 발화 누적 → Flow 다이어그램 표출 → Chat Q&A → 회의 종료 → 보고서 자동 생성·팝업**까지 육안 확인.<br/>- Phase 5에서 수정한 회의 종료 크래시(`QWebEnginePage.html()` → `FlowUI.reset_diagram()`)가 실제로 막혔는지 포함 검증<br/>- 산출물: E2E 체크리스트 + 스크린샷, 발견 이슈 즉시 패치 |
+
+#### Phase 6-1: 실제 STT/화자분리 엔진 구현 (핵심)
+
+| 대상 파일 | 작업 내용 |
+|:---|:---|
+| `prismflow/agents/stt/stt_agent.py` | `_load_openvino_models()` 실구현:<br/>- 하드웨어 자동 감지 체인 **NVIDIA CUDA → Intel OpenVINO/NPU → CPU 폴백** (설정 수동 오버라이드 허용)<br/>- `openvino-genai` Stateful Whisper 로드 + pyannote 화자분리 파이프라인 탑재<br/>- 가중치 **로컬 경로(`prismflow/resources/models/`) 우선 탐색**으로 오프라인 강제, 미존재 시 안내 다이얼로그/다운로드 상태바<br/><br/>`_process_inference()` 실구현 (현재 `return "Speaker_00", ""` 스텁 대체):<br/>- 추론 규격(§2-3 준수): 5.0초 윈도우 / 0.5초 시프트, `condition_on_previous_text=False`, `language="<|ko|>"`, `word_timestamps=True`<br/>- Diarization: `duration=5.0, step=0.5, rho_update=0.1`<br/>- `(speaker, text)` 반환 → 기존 `_run_real_loop` 버퍼 파이프라인 연결 |
+| `prismflow/agents/stt/audio.py` | 실제 마이크 캡처(16kHz / Mono / Float32) 동작 검증 및 링버퍼 안정화 |
+| `prismflow/resources/models/` [NEW] | Whisper / pyannote 가중치 로컬 번들 배치 경로 (Phase 7 오프라인 배포 전제) |
+
+> **모델 출처 메모**: Whisper는 Hugging Face(OpenVINO 변환본 또는 `faster-whisper`) 자유 다운로드. 화자분리 `pyannote/speaker-diarization-3.1`은 **게이트(gated) 모델**로 HF 계정·약관 동의·액세스 토큰 필요. 최초 1회 온라인 수신 후 로컬 번들링. 게이트가 부담되면 비게이트 diarization 대안 검토 가능. (6-1 착수 시 결정)
+
+#### Phase 6-2: 실시간 안정화 및 실사용 예외 차단
+
+- 노이즈/무음 처리 및 `config.vad_threshold` 연동
+- 버퍼 병목·타임라인 드리프트·백프레셔 제어
+- 하드웨어 가속 강제 제어 시 오류 → 안전 폴백 보장
+- `stt_mock_mode = False` 실측: 실제 한국어 발화 → 실시간 전사·화자분리 정확도 육안 검증
+
+#### 의존성 추가 (`requirements.txt`)
+- `openvino` / `openvino-genai`, `pyaudio`(또는 `sounddevice`), Whisper 추론 백엔드, `pyannote.audio` / `onnxruntime`
+- ※ 현재 `requirements.txt`는 venv 스냅샷이라 위 STT 패키지 부재 — 6-1 착수 시 추가
+
+#### ReAct 검증
+```bash
+.venv\Scripts\python -m pytest tests/test_stt.py -v   # 기존 Mock 회귀 + HW감지/추론 인터페이스 단위 테스트
+.venv\Scripts\python -m pytest tests/ -v
+```
+- 실엔진 테스트는 가중치/하드웨어 의존 → 옵트인 마커로 분리(CI 기본 제외), 수동 실측으로 정확도 확인
 
 ---
 
@@ -565,11 +613,8 @@ endlocal
 ## 8. 향후 로드맵 및 배포 전략 (Phase 6 & Phase 7)
 
 ### Phase 6: 실제 오픈소스 모델 연동 및 실시간 검증
-- **개발 내용**:
-  - `prismflow/agents/stt/stt_agent.py` 내의 `_load_openvino_models` 및 `_process_inference` 파이프라인 실제 구현.
-  - `openvino-genai` 기반의 Stateful Whisper와 `pyannote-openvino` ONNX 런타임 추론 엔진 탑재.
-  - `stt_mock_mode = False` 설정 시 실제 마이크 수집 오디오 데이터를 통한 실시간 전사 및 화자 분리 연동성 검사.
-  - 실시간 마이크 수집 시 발생하는 노이즈, 버퍼 병목, CPU/GPU 하드웨어 가속 강제 제어 시의 오류 해결 및 실사용 예외 차단.
+> **정식 상세 계획은 §5의 "Phase 6" 섹션으로 승격되었습니다.** (6-0 Pre-flight 게이트 → 6-1 실엔진 → 6-2 안정화)
+> 요약: `stt_agent.py` 스텁을 OpenVINO Whisper + pyannote 화자분리 실엔진으로 교체하고, 하드웨어 자동 감지(CUDA→OpenVINO/NPU→CPU)와 `stt_mock_mode=False` 실측을 완성한다.
 
 ### Phase 7: 오프라인 원클릭 패키징 및 가중치 모델 통합 배포
 - **배포 챌린지**: 

@@ -25,7 +25,7 @@
 | **실시간 녹음 / 음성 파일 저장 / STT 변환 / Mock 모드 변경** | [prismflow/agents/stt/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/stt) | [tests/test_stt.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_stt.py) |
 | **Mermaid 흐름도 렌더링 / QWebEngineView / 흐름도 요약 알고리즘** | [prismflow/agents/flow/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/flow) | [tests/test_flow.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_flow.py) |
 | **사용자 질문 처리 / RAG 컨텍스트 병합 / 채팅 UI 및 답변 스트리밍** | [prismflow/agents/chat/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/chat) | [tests/test_chat.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_chat.py) |
-| **회의 종료 시 최종 Markdown 보고서 생성 규칙** | [prismflow/agents/docs/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/docs) | [tests/test_docs.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_docs.py) |
+| **회의 종료 시 최종 Markdown 보고서 생성 규칙** | [prismflow/agents/report/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/report) | [tests/test_report.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_report.py) |
 
 ---
 
@@ -49,7 +49,8 @@ E:\Tak\Gemini\PrismFlow\
 │   ├── test_cli.py                 # Claude CLI 파이프 비차단 IO 테스트
 │   ├── test_stt.py                 # VAD 및 STT 에뮬레이터 테스트
 │   ├── test_flow.py                # Mermaid 코드 생성 및 흐름도 갱신 테스트
-│   └── test_chat.py                # Chat RAG 프롬프트 병합 및 응답 테스트
+│   ├── test_chat.py                # Chat RAG 프롬프트 병합 및 응답 테스트
+│   └── test_report.py              # 최종 회의록 생성·파일 I/O·DB summary·자동 실행 테스트
 │
 └── prismflow/                      # 메인 패키지 루트
     ├── __init__.py
@@ -85,9 +86,9 @@ E:\Tak\Gemini\PrismFlow\
         │   ├── chat_agent.py       # RAG 프롬프트 병합 및 Q&A 스레드
         │   └── chat_ui.py          # 질문 입력 및 대화 히스토리 표출 윈도우
         │
-        └── docs/                   # ④ Docs 최종 요약 보고서 에이전트
+        └── report/                 # ④ Report 최종 회의록 보고서 에이전트
             ├── __init__.py
-            └── docs_agent.py       # 회의 종료 요약 및 마크다운 파일 출력 스레드
+            └── report_agent.py     # 회의 종료 시 Opus 4.8 회의록 컴파일 및 마크다운 파일 출력 스레드 (ReportAgent + ReportWorker)
 ```
 
 ---
@@ -116,6 +117,6 @@ E:\Tak\Gemini\PrismFlow\
    - 반드시 기존 계획 구조를 보존한 채로, 해당 Phase 영역에 세부 기술 설계 및 내용을 점진적으로 덧붙여야 합니다.
    - **Phase 내 계획 수정이 이루어질 경우, 이에 종속성이 있는 다른 구성요소(예: `task.md`, `tests/` 구성, 관련 API 매핑 등)도 반드시 식별하여 동시 업데이트를 보장해야 합니다.**
 6. **문서 동기화 및 마감 엄격 규칙 (Document Sync & Closeout Rules)**:
-   - **프로젝트 문서 및 로컬 아티팩트 동기화**: 프로젝트 내 `docs/task.md` 또는 `docs/implementation_plan.md`가 수정될 경우, 로컬 아티팩트 디렉토리 내의 `task.md` 및 `implementation_plan.md`도 반드시 **즉각 100% 동일하게 동기화**하여 생성/수정해야 합니다.
+   - **단일 정본(SSOT) 원칙**: `docs/task.md`와 `docs/implementation_plan.md`가 **유일한 정본**입니다. 별도의 복제본(루트나 `artifacts/` 내 `task.md`·`implementation_plan.md`)을 만들어 이중 관리하지 **마십시오**. `artifacts/` 디렉토리는 세션 종료 시 작성하는 **handoff 문서 전용** 보관소입니다.
    - **역사서 선행 마감**: 임의의 개발 Phase를 '완료(✅ 완료 또는 [x])' 처리하여 최종 보고하기 직전, 반드시 [docs/history.md](file:///E:/Tak/Gemini/PrismFlow/docs/history.md)에 해당 Phase 동안의 상세 개발 내역, 시행착오(Trial & Error), 대안 비교, 블로커 극복 과정을 **선행 작성** 완료한 뒤 완료 선언을 해야 합니다. 역사서 작성 누락은 절대 허용되지 않습니다.
-   - **계획 변경과 Task 동시 반영**: 구현 도중 설계 및 계획의 추가나 수정이 발생하면, 이에 연동되는 [docs/task.md](file:///E:/Tak/Gemini/PrismFlow/docs/task.md)(및 아티팩트 `task.md`)의 세부 할 일 목록도 즉시 구조적으로 동기화하여 변경해야 합니다.
+   - **계획 변경과 Task 동시 반영**: 구현 도중 설계 및 계획의 추가나 수정이 발생하면, 이에 연동되는 [docs/task.md](file:///E:/Tak/Gemini/PrismFlow/docs/task.md)의 세부 할 일 목록도 즉시 구조적으로 동기화하여 변경해야 합니다.
