@@ -40,6 +40,9 @@ class AppCoordinator:
         self.chat_agent = ChatAgent(self.context, self.cli_controller)
         self.chat_ui = ChatUI(self.chat_agent)
 
+        # 트레이 매니저에 UI 핸들 주입
+        self.tray.set_ui_handlers(self.flow_ui, self.chat_ui)
+
         # Report Agent 기동 (회의 종료 시 최종 회의록 자동 컴파일)
         self.report_agent = ReportAgent(self.context, self.cli_controller)
         self.report_agent.report_generated.connect(self._on_report_generated)

@@ -22,6 +22,11 @@ class SystemTrayManager(QSystemTrayIcon):
         self.setToolTip("PrismFlow AI Assistant")
         
         self.init_menu()
+        self.activated.connect(self._on_tray_activated)
+        
+        # UI 핸들 초기화
+        self.flow_ui = None
+        self.chat_ui = None
         
         # 컨텍스트 신호 연결
         self.context.signals.meeting_started.connect(self._on_meeting_started)
@@ -41,6 +46,17 @@ class SystemTrayManager(QSystemTrayIcon):
         
         self.menu.addSeparator()
         
+        # 창 표시 복원 액션 추가
+        self.show_flow_action = QAction("회의 맵 표시 (Flow Map)", self)
+        self.show_flow_action.triggered.connect(self.restore_flow_ui)
+        self.menu.addAction(self.show_flow_action)
+        
+        self.show_chat_action = QAction("AI 채팅 표시 (AI Chat)", self)
+        self.show_chat_action.triggered.connect(self.restore_chat_ui)
+        self.menu.addAction(self.show_chat_action)
+        
+        self.menu.addSeparator()
+        
         self.settings_action = QAction("설정", self)
         self.settings_action.triggered.connect(self.show_settings)
         self.menu.addAction(self.settings_action)
@@ -50,6 +66,31 @@ class SystemTrayManager(QSystemTrayIcon):
         self.menu.addAction(self.exit_action)
         
         self.setContextMenu(self.menu)
+
+    def set_ui_handlers(self, flow_ui, chat_ui):
+        """오버레이 UI들의 핸들을 주입받아 복원 제어에 사용합니다."""
+        self.flow_ui = flow_ui
+        self.chat_ui = chat_ui
+
+    def restore_flow_ui(self):
+        if self.flow_ui:
+            self.flow_ui.showNormal()
+            self.flow_ui.raise_()
+            self.flow_ui.activateWindow()
+
+    def restore_chat_ui(self):
+        if self.chat_ui:
+            self.chat_ui.showNormal()
+            self.chat_ui.raise_()
+            self.chat_ui.activateWindow()
+
+    def restore_all_windows(self):
+        self.restore_flow_ui()
+        self.restore_chat_ui()
+
+    def _on_tray_activated(self, reason):
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.restore_all_windows()
 
     def start_meeting(self):
         session_id = datetime.now().strftime("%Y%m%d_%H%M%S")

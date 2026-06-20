@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton
-from PySide6.QtCore import Qt, QPropertyAnimation, QPoint, QRect
+from PySide6.QtCore import Qt, QPropertyAnimation, QPoint, QRect, QEvent
 
 class TranslucentOverlay(QWidget):
     """
@@ -52,37 +52,37 @@ class TranslucentOverlay(QWidget):
         
         layout = QHBoxLayout(self.control_widget)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(4)
         
         # 최소화 버튼
         self.btn_minimize = QPushButton(self.control_widget)
-        self.btn_minimize.setFixedSize(18, 18)
+        self.btn_minimize.setFixedSize(28, 20)
         self.btn_minimize.setToolTip("최소화")
         self.btn_minimize.clicked.connect(self.showMinimized)
         
         # 최대화/복원 버튼
         self.btn_maximize = QPushButton(self.control_widget)
-        self.btn_maximize.setFixedSize(18, 18)
-        self.btn_maximize.setToolTip("최대화/복원")
+        self.btn_maximize.setFixedSize(28, 20)
+        self.btn_maximize.setToolTip("최대화")
         self.btn_maximize.clicked.connect(self.toggle_maximize)
         
         # 닫기 버튼
         self.btn_close = QPushButton(self.control_widget)
-        self.btn_close.setFixedSize(18, 18)
+        self.btn_close.setFixedSize(28, 20)
         self.btn_close.setToolTip("닫기")
         self.btn_close.clicked.connect(self.close)
         
-        # QSS 스타일 (모던 미니멀리즘 플랫 스타일)
-        self.btn_minimize.setStyleSheet(self._button_style("#cbd5e1", "rgba(255, 255, 255, 0.08)", "rgba(255, 255, 255, 0.18)", "—"))
-        self.btn_maximize.setStyleSheet(self._button_style("#cbd5e1", "rgba(255, 255, 255, 0.08)", "rgba(255, 255, 255, 0.18)", "⤢"))
-        self.btn_close.setStyleSheet(self._button_style("#cbd5e1", "rgba(255, 255, 255, 0.08)", "#ef4444", "×"))
+        # QSS 스타일 초기 적용 (윈도우 표준 플랫 스타일)
+        self.btn_minimize.setStyleSheet(self._button_style("#cbd5e1", "transparent", "rgba(255, 255, 255, 0.08)", "—"))
+        self.btn_close.setStyleSheet(self._button_style("#cbd5e1", "transparent", "#e81123", "✕"))
+        self._update_maximize_button_style()
         
         layout.addWidget(self.btn_minimize)
         layout.addWidget(self.btn_maximize)
         layout.addWidget(self.btn_close)
         
-        # 위젯 전체 크기 고정 (18 * 3 + 6 * 2 = 66)
-        self.control_widget.setFixedSize(66, 18)
+        # 위젯 전체 크기 고정 (28 * 3 + 4 * 2 = 92)
+        self.control_widget.setFixedSize(92, 20)
 
     def _button_style(self, color, bg, hover_bg, text):
         return f"""
@@ -90,11 +90,11 @@ class TranslucentOverlay(QWidget):
                 background-color: {bg};
                 color: {color};
                 border: none;
-                border-radius: 9px;
+                border-radius: 0px;
                 font-family: 'Segoe UI', Arial, sans-serif;
-                font-size: 11px;
-                font-weight: bold;
-                padding: 0px 0px 1px 0px;
+                font-size: 10px;
+                font-weight: normal;
+                padding: 0px;
             }}
             QPushButton:hover {{
                 background-color: {hover_bg};
@@ -102,11 +102,26 @@ class TranslucentOverlay(QWidget):
             }}
         """
 
+    def _update_maximize_button_style(self):
+        """최대화/복원 상태에 맞게 버튼 글자와 스타일을 갱신합니다."""
+        if self.isMaximized():
+            self.btn_maximize.setStyleSheet(self._button_style("#cbd5e1", "transparent", "rgba(255, 255, 255, 0.08)", "❐"))
+            self.btn_maximize.setToolTip("이전 크기로 복원")
+        else:
+            self.btn_maximize.setStyleSheet(self._button_style("#cbd5e1", "transparent", "rgba(255, 255, 255, 0.08)", "□"))
+            self.btn_maximize.setToolTip("최대화")
+
     def toggle_maximize(self):
         if self.isMaximized():
             self.showNormal()
         else:
             self.showMaximized()
+        self._update_maximize_button_style()
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            self._update_maximize_button_style()
+        super().changeEvent(event)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
