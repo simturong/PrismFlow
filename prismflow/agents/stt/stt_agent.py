@@ -262,11 +262,8 @@ class RealTimeEngineWorker(QThread):
         self._load_diarization_if_available()
 
     def _load_diarization_if_available(self):
-        """HF 토큰이 있고 pyannote가 설치된 경우에만 화자분리 파이프라인과 임베딩 모델을 로드한다."""
-        token = getattr(self.config, "hf_token", "") or ""
-        if not token:
-            return
-        # waveform 텐서를 직접 입력하므로 torchcodec(FFmpeg) DLL 미로드 경고는 무해 → 억제
+        """로컬 오프라인 캐시 우선으로 로드하며, 실패 시 HF 토큰 온라인 방식으로 폴백한다."""
+        import os
         import warnings
         warnings.filterwarnings("ignore", message=".*torchcodec.*")
         try:
@@ -275,6 +272,37 @@ class RealTimeEngineWorker(QThread):
                 from pyannote.audio import Pipeline, Model, Inference
         except ImportError:
             return
+
+        # 1단계: 로컬 오프라인(토큰리스) 로드 시도
+        local_config_yaml = os.path.join(self.config.models_dir, "diarization", "config.yaml")
+        local_hf_cache = os.path.join(self.config.models_dir, "hf_cache")
+        
+        if os.path.isfile(local_config_yaml) and os.path.isdir(local_hf_cache):
+            logger.info("Local offline pyannote models detected. Attempting offline tokenless load...")
+            # 허깅페이스 오프라인 모드 강제 및 캐시 디렉토리 오버라이드
+            os.environ["HF_HUB_OFFLINE"] = "1"
+            os.environ["HF_HOME"] = local_hf_cache
+            try:
+                self.diarization_model = Pipeline.from_pretrained(local_config_yaml)
+                
+                # 임베딩 오프라인 로드 (HF_HOME이 로컬 캐시로 고정되어 있으므로 캐시 폴더에서 불러옴)
+                emb_model = Model.from_pretrained("pyannote/wespeaker-voxceleb-resnet34-LM")
+                self.embedding_extractor = Inference(emb_model, window="whole")
+                logger.info("Successfully loaded pyannote offline pipeline and embedding model.")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to load pyannote offline: {e}. Falling back to online mode.")
+                # 실패 시 환경변수 롤백 및 온라인 폴백 진행
+                os.environ.pop("HF_HUB_OFFLINE", None)
+                os.environ.pop("HF_HOME", None)
+                self.diarization_model = None
+                self.embedding_extractor = None
+
+        # 2단계: 기존 HF 토큰 온라인 폴백 로드
+        token = getattr(self.config, "hf_token", "") or ""
+        if not token:
+            return
+
         try:
             # pyannote.audio 4.x는 token= 인자를 사용(구버전은 use_auth_token=)
             try:

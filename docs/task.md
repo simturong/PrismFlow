@@ -115,4 +115,6 @@
 - [x] 6-3-6 정리·회귀: 설정 오버라이드/매핑 단위테스트 추가, 전체 회귀 유지, stt_live_test 정리·Pretendard 폰트 잔여 처리
 
 ## Phase 7: 오프라인 원클릭 패키징 및 배포 (6-3 완료 후 착수)
-- [ ] (6-3 이중 검증 통과 전 착수 금지) Embeddable Python + 모델 번들 + Inno Setup 통합 인스톨러
+- [x] 7-1: pyannote 토큰리스 오프라인 로드 분기 구현 (`stt_agent.py` 내 로컬 `config.yaml` / `hf_cache` 감지 및 로드 구현 완료)
+- [x] 7-2: Embeddable Python 격리 패키지 빌드 자동화 스크립트 작성 (`build_release.py` 원클릭 릴리즈 툴 구현 완료)
+- [ ] 7-3: Inno Setup (`setup.iss`) 스크립트 작성 및 단일 설치파일(`PrismFlow_Setup_v1.0.exe`) 빌드 검증

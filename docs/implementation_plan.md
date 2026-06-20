@@ -656,24 +656,40 @@ endlocal
 
 ## 8. 향후 로드맵 및 배포 전략 (Phase 6 & Phase 7)
 
-### Phase 6: 실제 오픈소스 모델 연동 및 실시간 검증
-> **정식 상세 계획은 §5의 "Phase 6" 섹션으로 승격되었습니다.** (6-0 Pre-flight 게이트 → 6-1 실엔진 → 6-2 안정화)
-> 요약: `stt_agent.py` 스텁을 OpenVINO Whisper + pyannote 화자분리 실엔진으로 교체하고, 하드웨어 자동 감지(CUDA→OpenVINO/NPU→CPU)와 `stt_mock_mode=False` 실측을 완성한다.
-
 ### Phase 7: 오프라인 원클릭 패키징 및 가중치 모델 통합 배포
-- **배포 챌린지**: 
-  - 폐쇄망(오프라인) 환경에서 사용자가 즉시 사용할 수 있도록 **가상환경, 실행파일, 그리고 1GB~3GB에 달하는 STT/Diarization 모델 가중치를 하나로 묶어 제공**해야 합니다.
-  - OS 전역에 Python이나 CUDA Toolkit, OpenVINO 런타임이 설치되어 있지 않더라도 격리되어 실행되도록 보장하는 것이 핵심입니다.
-- **제안하는 배포 아키텍처 (Portable Bundle + 인스톨러)**:
-  - **1단계: Python Embeddable 격리 배포**:
-    - `PyInstaller`를 통한 단일 `.exe` 빌드는 실행 시 임시 폴더(`_MEIPASS`)에 수십만 개의 라이브러리 파일을 매번 압축 해제하므로 앱 기동 지연(5초~10초)이 심각하고 가상환경 리소스 누수가 잦습니다.
-    - 대신 프로젝트 디렉토리에 **Embeddable Python**과 고정된 `.venv` 라이브러리 풀을 통째로 포함시키는 **Portable 폴더 패키지** 구조를 지향합니다.
-    - 메인 실행은 `run.bat` 스크립트를 C++ 또는 C#으로 가볍게 컴파일한 경량 런처 `.exe` 파일로 래핑하여 사용자가 일반 설치 앱처럼 클릭하여 바로 실행할 수 있도록 합니다.
-  - **2단계: 모델 가중치 로컬 번들링**:
-    - Whisper 및 Pyannote 가중치 파일들을 프로그램 폴더 내부의 `prismflow/resources/models/` 경로에 패키징하여 배포 파일에 직접 포함시킵니다.
-    - 코드의 `AppConfig`가 기동 시 로컬 패키지 내부의 상대 경로에서 가중치를 최우선 탐색하도록 설계하여 허깅페이스 다운로드 시도를 원천 차단하고 오프라인 환경을 강제합니다.
-    - **pyannote 토큰리스 오프라인 로드 (6-3-2 실측서 기동 시 huggingface.co 온라인 의존 확인됨)**: 화자분리 4개 repo(`segmentation-3.0`/`speaker-diarization-3.1`/`speaker-diarization-community-1`/`wespeaker-voxceleb-resnet34-LM`) 가중치를 번들하고, 기동 시 `HF_HOME`을 번들 캐시로·`HF_HUB_OFFLINE=1` 설정(또는 로컬 `config.yaml` 경로 로드)하여 토큰·네트워크 없이 로컬에서만 로드한다. **엔드유저는 HF 토큰 불필요**(설정창 토큰란은 개발자/온라인 업데이트용 선택값으로만 유지). `stt_agent._load_diarization_if_available`에 "로컬 우선 → 실패 시 토큰 온라인" 폴백 추가. 번들 전 각 모델 라이선스(MIT 추정)·재배포 조건 재확인.
-  - **3단계: Inno Setup 기반 통합 설치 파일 빌드**:
-    - Portable 폴더 전체와 모델 가중치 파일들을 압축률이 뛰어난 **Inno Setup** 또는 **NSIS** 도구를 사용해 하나의 Windows용 설치 파일(`PrismFlow_Setup_v1.0.exe`)로 컴파일합니다.
-    - 설치 프로그램 실행 시 바탕화면에 바로가기 아이콘을 만들고, 모델 가중치를 안정적으로 풀고 패키징 폴더를 구성하게 합니다.
+
+#### 7-1. pyannote 토큰리스 오프라인 로컬 로드 설계 상세
+*   **원리**: pyannote 파이프라인이 기동 시 huggingface.co 허브를 참조하지 않도록, 허브의 `config.yaml` 설정을 로컬 리소스 디렉토리(`prismflow/resources/models/diarization/config.yaml`)에 고정 패키징하여 로컬 파일 경로를 직접 전달합니다.
+*   **환경 변수 제어**:
+    *   `os.environ["HF_HUB_OFFLINE"] = "1"` 설정을 활성화하여 모든 허깅페이스 서버 HEAD/GET API 접속 시도를 강제로 차단하고 오프라인 구동을 보장합니다.
+    *   `os.environ["HF_HOME"] = os.path.join(self.config.models_dir, "hf_cache")` 설정을 통해 pyannote가 하위 의존 모델(`segmentation-3.0`, `wespeaker-voxceleb-resnet34-LM`)을 검색할 때 로컬 디렉토리 내부의 캐시 구조(`models/hf_cache/hub/models--...`)만 탐색하도록 격리합니다.
+*   **로컬 캐시 이식**: 
+    *   이미 개발 계정으로 동의 완료되어 캐싱된 모델 디렉토리 3종(`models--pyannote--segmentation-3.0`, `models--pyannote--speaker-diarization-3.1`, `models--pyannote--wespeaker-voxceleb-resnet34-LM`)을 개발자 PC의 `~/.cache/huggingface/hub/` 경로에서 통째로 추출하여 `prismflow/resources/models/hf_cache/hub/` 경로로 복사 및 패키징합니다.
+
+#### 7-2. Portable Python 격리 패키지 구조 설계 상세
+*   **이유**: PyInstaller 단일 파일 빌드는 기동 시 수 기가바이트(PyTorch, OpenVINO 등)의 압축 해제 오버헤드로 인해 Windows에서 극심한 기동 지연(10초 이상)과 임시 폴더 리소스 누수를 일으킵니다. 이를 극복하기 위해 압축 해제 지연이 없는 **Portable Python (Python Embeddable Package)** 구조를 설계합니다.
+*   **디렉토리 트리 구성**:
+    ```text
+    PrismFlow_Release/
+    ├── python-3.11.9-embed-amd64/     # 경량 임베디드 파이썬 런타임 (공식 zip 바이너리)
+    │   ├── python.exe
+    │   ├── python311.dll
+    │   └── ...
+    ├── site-packages/                 # pip install --target=. 으로 빌드된 완전 격리 의존성 패키지 풀
+    ├── prismflow/                     # PrismFlow 메인 패키지 소스코드
+    │   ├── resources/
+    │   │   ├── models/                # Whisper(base/small) 및 pyannote hf_cache 가중치 번들
+    │   │   └── Pretendard-Regular.ttf
+    ├── main.py                        # 앱 진입점
+    ├── AppLauncher.exe                # C++/C#으로 작성될 경량 런처 (콘솔 창 없이 임베디드 파이썬으로 main.py 기동)
+    └── run.bat                        # 런타임 디버그용 배치 스크립트
+    ```
+*   **런처 작동 원리**:
+    *   임베디드 파이썬 패키지의 `python311._pth` 파일을 수정하여 `./site-packages`와 `./`를 sys.path 검색 경로에 추가합니다.
+    *   이를 통해 엔드유저 환경에 Python이나 환경변수가 없어도, Portable 폴더 내부의 격리된 런타임 및 가중치로 100% 즉시 오프라인 구동됩니다.
+
+#### 7-3. Inno Setup 인스톨러 빌드 상세
+*   Inno Setup 스크립트(`setup.iss`)를 구성하여 Portable 폴더 트리 전체(모델 가중치 포함 약 3GB 내외)를 고도로 압축해 단일 설치 본(`PrismFlow_Setup_v1.0.exe`)으로 빌드합니다.
+*   설치 시 바탕화면/시작프로그램 바로가기 아이콘 생성, 자동 경로 셋업, 마이크 및 하드웨어 가속 적합성 검사를 내장합니다.
+
 
