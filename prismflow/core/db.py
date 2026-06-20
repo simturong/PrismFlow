@@ -13,9 +13,17 @@ class DatabaseManager:
         self.init_db()
 
     def _get_connection(self) -> sqlite3.Connection:
-        """데이터베이스 연결을 생성하고 외래키를 활성화합니다."""
+        """데이터베이스 연결을 생성하고 외래키 및 다중 스레드 동시성 PRAGMA를 적용합니다.
+
+        여러 QThread(STT·Flow·Chat·Report 워커)가 동시에 DB에 접근하므로, WAL 저널 모드로
+        읽기/쓰기 동시성을 확보하고 busy_timeout으로 잠금 경합 시 즉시 실패하지 않고 대기하도록
+        하여 'database is locked' 및 네이티브 접근 위반(access violation)을 방어합니다.
+        """
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 30000;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("PRAGMA foreign_keys = ON;")
         return conn
 

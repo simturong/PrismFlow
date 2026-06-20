@@ -156,27 +156,27 @@ class AppCoordinator:
         logger.error(f"Failed to generate final meeting report: {msg}")
 
     def cleanup(self):
-        """프로그램 종료 시 백그라운드 리소스와 스레드를 안전하게 정리합니다."""
+        """프로그램 종료 시 백그라운드 리소스와 스레드를 안전하게 정리합니다.
+
+        각 정리 단계를 개별 try/except로 격리하여, 한 에이전트의 정리 실패가 나머지 스레드
+        종료를 가로막지 않도록 보장합니다. (스레드가 종료되지 못하고 누수되면 프로세스 종료 시점에
+        SQLite 등 네이티브 자원 접근 위반(access violation)을 유발할 수 있어, 전 단계 완주가 핵심입니다.)
+        """
         logger.info("Cleaning up coordinator resources...")
-        if self.chat_agent:
-            self.chat_agent.cleanup()
-        if self.report_agent:
-            self.report_agent.cleanup()
-        if self.stt_worker:
+        # 먼저 DB·CLI에 접근하는 워커 보유 에이전트(Chat/Report)를 합류 대기시킨 뒤,
+        # 입력 생산자(STT/Flow/ScreenDetector)를 정지합니다.
+        cleanup_steps = [
+            ("chat_agent", lambda: self.chat_agent and self.chat_agent.cleanup()),
+            ("report_agent", lambda: self.report_agent and self.report_agent.cleanup()),
+            ("stt_worker", lambda: self.stt_worker and self.stt_worker.stop()),
+            ("flow_agent", lambda: self.flow_agent and self.flow_agent.stop()),
+            ("screen_detector", lambda: self.screen_detector and self.screen_detector.stop()),
+        ]
+        for name, step in cleanup_steps:
             try:
-                self.stt_worker.stop()
-            except Exception:
-                pass
-        if self.flow_agent:
-            try:
-                self.flow_agent.stop()
-            except Exception:
-                pass
-        if self.screen_detector:
-            try:
-                self.screen_detector.stop()
-            except Exception:
-                pass
+                step()
+            except Exception as e:
+                logger.error(f"Error while cleaning up {name}: {e}")
 
 def main():
     app = QApplication(sys.argv)
@@ -217,10 +217,6 @@ def main():
     app.aboutToQuit.connect(coordinator.cleanup)
     
     sys.exit(app.exec())
-
-if __name__ == "__main__":
-    main()
-
 
 if __name__ == "__main__":
     main()

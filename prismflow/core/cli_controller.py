@@ -64,6 +64,17 @@ class ClaudeCLIController:
         )
 
     @staticmethod
+    def _looks_like_session_limit(text: str) -> bool:
+        """오류 텍스트가 Claude CLI 사용량 한도(session limit) 신호인지 판별합니다."""
+        t = (text or "").lower()
+        return "session limit" in t or "limit" in t or "reset" in t
+
+    @staticmethod
+    def _is_permanent_launch_error(exc: Exception) -> bool:
+        """재시도해도 무의미한 영구적 실행 실패(실행 파일 부재/권한 오류 등)인지 판별합니다."""
+        return isinstance(exc, (FileNotFoundError, PermissionError, NotADirectoryError))
+
+    @staticmethod
     def _normalize_session_id(session_id: str) -> str:
         """claude CLI는 `--resume`/`--session-id`에 유효한 UUID를 요구합니다.
 
@@ -118,31 +129,50 @@ class ClaudeCLIController:
                 if result.returncode != 0:
                     err_msg = result.stderr.strip()
                     logger.error(f"Claude CLI execution failed (Code {result.returncode}) on attempt {attempt+1}: {err_msg}")
-                    if "session limit" in err_msg.lower() or "limit" in err_msg.lower() or "reset" in err_msg.lower():
+                    if self._looks_like_session_limit(err_msg):
+                        # 사용량 한도는 재시도 무의미 → 상태 플래그 설정 후 즉시 전파
                         self._session_limited = True
-                    raise RuntimeError(f"Claude CLI execution failed: {err_msg}")
-                    
-                return result.stdout.strip()
-                
-            except subprocess.TimeoutExpired as e:
-                logger.error(f"Claude CLI execution timed out on attempt {attempt+1} after {timeout} seconds.")
-                last_exception = TimeoutError(f"Claude CLI execution timed out after {timeout} seconds.")
-            except Exception as e:
-                last_exception = e
-                err_str = str(e)
-                if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
-                    self._session_limited = True
-                    raise RuntimeError(f"Claude CLI session limit reached: {err_str}") from e
+                        raise RuntimeError(f"Claude CLI execution failed: {err_msg}")
+                    # 비정상 종료코드는 순시(transient) 실패일 수 있어 재시도 대상으로 둡니다.
+                    last_exception = RuntimeError(f"Claude CLI execution failed: {err_msg}")
+                else:
+                    return result.stdout.strip()
 
-            # 세션 리밋 상태이거나 마지막 시도이면 재시도 스킵
-            if self._session_limited or attempt == max_retries - 1:
+            except subprocess.TimeoutExpired:
+                # 타임아웃은 호출자가 지정한 한도이므로 재시도해도 동일하게 만료됩니다 → 즉시 전파(불필요한 지연 방지).
+                logger.error(f"Claude CLI execution timed out after {timeout} seconds.")
+                raise TimeoutError(f"Claude CLI execution timed out after {timeout} seconds.")
+            except RuntimeError:
+                # 위에서 만든 session-limit RuntimeError는 그대로 전파합니다.
+                raise
+            except Exception as e:
+                # 실행 파일 부재/권한 오류 등 영구적 실패는 재시도해도 무의미하므로 즉시 RuntimeError로 표준화합니다.
+                if self._is_permanent_launch_error(e):
+                    logger.error(f"Claude CLI executable could not be launched: {e}")
+                    raise RuntimeError(
+                        f"Claude CLI executable not found or not executable: '{self._cli_exe}' ({e})"
+                    ) from e
+                last_exception = e
+                if self._looks_like_session_limit(str(e)):
+                    self._session_limited = True
+                    raise RuntimeError(f"Claude CLI session limit reached: {e}") from e
+
+            # 마지막 시도이면 재시도 스킵
+            if attempt == max_retries - 1:
                 break
-                
+
             logger.warning(f"Claude CLI connection temporary failure on attempt {attempt+1}. Retrying in {delay}s...")
             time.sleep(delay)
             delay *= 2
 
-        raise last_exception or RuntimeError("Unknown error during Claude CLI execution.")
+        # 모든 재시도 소진: 계약(RuntimeError/TimeoutError)에 맞춰 표준화하여 전파합니다.
+        if isinstance(last_exception, (RuntimeError, TimeoutError)):
+            raise last_exception
+        if last_exception is not None:
+            raise RuntimeError(
+                f"Claude CLI execution failed after {max_retries} attempts: {last_exception}"
+            ) from last_exception
+        raise RuntimeError("Unknown error during Claude CLI execution.")
 
     def execute_command_stream(self, prompt: str, session_id: str, model: Optional[str] = None,
                                system_prompt: Optional[str] = None):
@@ -210,6 +240,10 @@ class ClaudeCLIController:
                     break
                 except Exception as e:
                     last_exception = e
+                    # 실행 파일 부재/권한 오류 등 영구적 실패는 재시도해도 무의미하므로 즉시 중단합니다.
+                    if self._is_permanent_launch_error(e):
+                        logger.error(f"Claude CLI Stream executable could not be launched: {e}")
+                        break
                     if attempt == max_retries - 1:
                         break
                     logger.warning(f"Claude CLI Popen temporary failure on attempt {attempt+1}: {e}. Retrying in {delay}s...")

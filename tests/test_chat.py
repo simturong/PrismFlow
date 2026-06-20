@@ -36,40 +36,45 @@ def test_chat_ui_init(q_app, temp_config):
     ui.close()
     context.reset()
 
-def test_chat_agent_background_ingestion(temp_config):
-    """3분 주기 백그라운드 발화 주입 동작 및 last_ingested_idx 갱신 테스트"""
+def test_chat_agent_ingestion_free_on_meeting_start(temp_config):
+    """(Phase 9-4) 회의 시작 시 백그라운드 CLI 주입 없이 세션 초기화 신호만 방출되는지 검증.
+
+    3분 주기 IngestWorker가 폐지되었으므로, 회의가 시작돼도 execute_command/stream 호출은
+    0회여야 하며(Ingestion-free), 대신 session_initialized 신호로 UI 입력창이 열려야 한다.
+    """
     context = MeetingContext()
     context.reset()
     context.db_manager = DatabaseManager(temp_config.db_path)
-    context.start_meeting("session_test_ingest", "주입 테스트")
-    
+
+    context.start_meeting("session_test_ingest_free", "주입 없는 세션")
     context.add_transcript("Speaker_00", "첫 번째 발화입니다.")
     context.add_transcript("Speaker_01", "두 번째 발화입니다.")
-    
+
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
     mock_cli.is_session_limited.return_value = False
-    
-    # 50ms 마다 자동 주입 타이머 실행하도록 설정
-    agent = ChatAgent(context=context, cli_controller=mock_cli, ingest_interval_ms=50)
-    
-    # 초기 비동기 이벤트를 흘려보냄
+
+    agent = ChatAgent(context=context, cli_controller=mock_cli)
+
+    initialized = []
+    agent.session_initialized.connect(lambda: initialized.append(True))
+
+    # 회의 시작 신호를 다시 발생시켜 세션 초기화 경로를 트리거
+    agent.on_meeting_started(context.current_session_id)
+
+    # 비동기 이벤트를 흘려보냄 (혹시 모를 백그라운드 주입이 일어나는지 관찰)
     loop = QEventLoop()
     QTimer.singleShot(150, loop.quit)
     loop.exec()
-    
-    # 호출 횟수 검증 (초기화 시 1회 + 신규 추가 발화 1회)
-    assert mock_cli.execute_command.call_count >= 2
-    
-    calls = mock_cli.execute_command.call_args_list
-    prompts = [c[1].get('prompt', '') or c[0][0] for c in calls]
-    
-    assert any("회의 챗 세션을 시작합니다." in p for p in prompts)
-    assert any("첫 번째 발화입니다." in p for p in prompts)
-    assert any("두 번째 발화입니다." in p for p in prompts)
-    
-    assert agent.last_ingested_idx == 1
-    
+
+    # 1. 백그라운드 CLI 주입이 전혀 발생하지 않아야 함 (Ingestion-free One-shot 구조)
+    assert mock_cli.execute_command.call_count == 0
+    assert mock_cli.execute_command_stream.call_count == 0
+    # 2. 세션 초기화 신호가 방출되어 UI 입력창이 열릴 수 있어야 함
+    assert initialized == [True]
+    # 3. 주기적 주입 인덱스는 갱신되지 않고 초기값(-1)을 유지해야 함
+    assert agent.last_ingested_idx == -1
+
     context.end_meeting()
     context.reset()
 
@@ -180,29 +185,40 @@ def test_chat_ui_integration(q_app, temp_config):
     context.reset()
 
 def test_chat_agent_cleanup(temp_config):
-    """ChatAgent.cleanup 호출 시 모든 비동기 워커가 안전하게 종료되는지 검증"""
+    """(Phase 9-4) ChatAgent.cleanup이 활성 Q&A 워커를 안전하게 합류·종료하는지 검증.
+
+    ingest_timer가 폐지되었으므로 cleanup은 그 참조 없이도 예외 없이 완료되어야 하며,
+    진행 중인 ChatQNAWorker(QThread)를 wait()로 안전하게 종료한 뒤 active_workers를 비워야 한다.
+    """
     context = MeetingContext()
     context.reset()
     context.db_manager = DatabaseManager(temp_config.db_path)
     context.start_meeting("session_test_cleanup", "클린업 테스트")
-    
+
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
     mock_cli.is_session_limited.return_value = False
-    
-    # agent 생성 시 최초 세션 연결을 위해 IngestWorker가 하나 기동됨
-    agent = ChatAgent(context=context, cli_controller=mock_cli, ingest_interval_ms=50000)
-    
+
+    # Q&A 스트림이 잠시 지속되도록 가짜 스트림 구성 (cleanup이 실제로 합류 대기하는지 확인)
+    def fake_stream(prompt, session_id, model, system_prompt=None):
+        for _ in range(3):
+            time.sleep(0.05)
+            yield "토큰"
+    mock_cli.execute_command_stream = fake_stream
+
+    agent = ChatAgent(context=context, cli_controller=mock_cli)
+
+    # 질문을 던져 QNA 워커 1개를 기동
+    agent.ask_question("정리 대상 질문")
     assert len(agent.active_workers) == 1
     worker = agent.active_workers[0]
-    
-    # cleanup 호출
+
+    # cleanup 호출 (ingest_timer 참조 없이 정상 동작해야 함)
     agent.cleanup()
-    
+
     assert len(agent.active_workers) == 0
-    assert agent.ingest_timer.isActive() is False
     assert worker.isRunning() is False
-    
+
     context.end_meeting()
     context.reset()
 

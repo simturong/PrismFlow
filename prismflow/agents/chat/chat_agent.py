@@ -2,7 +2,7 @@ import threading
 import time
 import logging
 from typing import Optional
-from PySide6.QtCore import QObject, QTimer, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal
 from prismflow.core.context import MeetingContext
 from prismflow.core.cli_controller import ClaudeCLIController
 
@@ -15,34 +15,6 @@ CHAT_SYSTEM_PROMPT = (
     "한국어로 간결하고 정확하게 답하십시오. 코드 작업·파일 수정·도구 사용을 하지 말고 "
     "텍스트로만 답하며, 회의에 없는 내용은 추측하지 마십시오."
 )
-
-class IngestWorker(QThread):
-    """백그라운드에서 전사록을 Claude CLI 세션에 비동기 주입하는 스레드"""
-    finished = Signal(int)
-    error = Signal(str)
-    
-    def __init__(self, cli_controller: ClaudeCLIController, prompt: str, session_id: str, last_idx: int, cli_lock: threading.Lock):
-        super().__init__()
-        self.cli_controller = cli_controller
-        self.prompt = prompt
-        self.session_id = session_id
-        self.last_idx = last_idx
-        self.cli_lock = cli_lock
-        
-    def run(self):
-        try:
-            with self.cli_lock:
-                self.cli_controller.execute_command(
-                    prompt=self.prompt,
-                    session_id=f"chat-session-{self.session_id}",
-                    model="claude-haiku-4-5",
-                    system_prompt=CHAT_SYSTEM_PROMPT
-                )
-            self.finished.emit(self.last_idx)
-        except Exception as e:
-            logger.error(f"IngestWorker execution failed: {str(e)}")
-            self.error.emit(str(e))
-
 
 class ChatQNAWorker(QThread):
     """비동기 방식으로 Claude CLI를 실행하여 답변을 스트리밍하는 스레드"""
@@ -77,7 +49,11 @@ class ChatQNAWorker(QThread):
 
 
 class ChatAgent(QObject):
-    """Chat Agent로 3분 주기 백그라운드 전사록 주입 및 실시간 텍스트 Q&A 스트리밍을 담당합니다."""
+    """Ingestion-free One-shot Q&A 방식으로 실시간 텍스트 Q&A 스트리밍을 담당하는 Chat Agent.
+
+    (Phase 9-4) 3분 주기 백그라운드 전사록 주입(IngestWorker)을 영구 폐지하고, 질문 시점에만
+    최근 발화 슬라이딩 윈도우와 Mermaid 맥락을 묶어 단발성으로 호출하여 세션 락 경합을 원천 차단합니다.
+    """
     token_delivered = Signal(str)
     finished = Signal(str)
     error_occurred = Signal(str)
@@ -112,21 +88,15 @@ class ChatAgent(QObject):
     def on_meeting_ended(self, session_id: str):
         # 백그라운드 주입이 제거되었으므로 미팅 종료 시 추가 작업 없음
         pass
-        
-    def ingest_transcripts_background(self):
-        # Ingestion-free 구조로 변경됨에 따라 사용하지 않음 (하위 호환성 유지용 빈 함수)
-        pass
-        
-    def on_ingest_success(self, last_idx):
-        pass
-        
-    def on_ingest_error(self, err_msg):
-        pass
-        
+
     def ask_question(self, user_query: str):
         if not self.session_id:
             self.session_id = "default_session"
-            
+
+        # 이미 완료된 Q&A 워커를 정리하여 active_workers 무한 누적을 방지합니다(질문이 반복돼도 상수 유지).
+        # 아직 실행 중인 워커만 보존하므로 진행 중 스레드를 조기 회수해 크래시를 유발하지 않습니다.
+        self.active_workers = [w for w in self.active_workers if w.isRunning()]
+
         transcripts = self.context.transcripts
         max_idx = len(transcripts) - 1
         
@@ -241,15 +211,22 @@ class ChatAgent(QObject):
         return response
 
     def cleanup(self):
-        """기동 중인 타이머를 멈추고 활성화된 비동기 스레드(Worker)들을 안전하게 종료합니다."""
+        """활성화된 비동기 Q&A 워커(QThread)들을 안전하게 종료 대기합니다.
+
+        (Phase 9-4) 백그라운드 IngestWorker/타이머가 폐지되었으므로 ingest_timer 참조를 제거하고,
+        진행 중인 Q&A 워커는 우선 graceful하게 wait()로 합류시킨 뒤 한도 초과 시에만 강제 종료합니다.
+        (DB·CLI 접근 중인 워커를 즉시 terminate()하면 SQLite 네이티브 접근 위반을 유발할 수 있어 회피)
+        """
         logger.info("Cleaning up ChatAgent resources...")
-        self.ingest_timer.stop()
-        
-        # 스레드 종료 및 대기
         for worker in list(self.active_workers):
-            if worker.isRunning():
-                logger.info(f"Terminating active worker thread: {worker}")
-                worker.terminate()
-                worker.wait()
+            try:
+                if worker.isRunning():
+                    logger.info(f"Waiting for active chat worker to finish: {worker}")
+                    if not worker.wait(5000):
+                        logger.warning(f"Chat worker did not finish in time; terminating as last resort: {worker}")
+                        worker.terminate()
+                        worker.wait()
+            except Exception as e:
+                logger.warning(f"Error during chat worker cleanup: {e}")
         self.active_workers.clear()
 

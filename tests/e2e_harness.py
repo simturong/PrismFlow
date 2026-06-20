@@ -57,7 +57,7 @@ class E2EHarness:
 
         ClaudeCLIController.execute_command = mock_execute_command
         ClaudeCLIController.execute_command_stream = mock_execute_command_stream
-        
+
         # os.startfile 모킹하여 브라우저/편집기 자동 팝업 차단
         original_startfile = getattr(os, "startfile", None)
         os.startfile = lambda path: logger.info(f"[Mocked startfile] Opened: {path}")
@@ -65,73 +65,79 @@ class E2EHarness:
         # 2. AppCoordinator 로드 및 설정 주입
         original_load_default = AppConfig.load_default
         AppConfig.load_default = lambda: self.config
-        
-        # STT 가속화 설정
-        self.config.stt_mock_interval = 1.0
-        self.config.stt_mock_mode = True
-        
-        app = QApplication.instance()
-        if app is None:
-            app = QApplication(sys.argv)
-            
-        coordinator = AppCoordinator(app)
-        
-        # 3. 회의 가동
-        session_id = f"e2e_session_{int(time.time())}"
-        self.context.start_meeting(session_id, title="E2E 테스트 하네스 회의")
-        
-        # Flow Agent 갱신 주기 2.0초로 단축
-        if coordinator.flow_agent:
-            coordinator.flow_agent.check_interval_sec = 2.0
-            
-        # 10초 가속 루프
-        start_time = time.time()
-        chat_sent = False
-        
+
+        coordinator = None
         try:
-            while time.time() - start_time < 10.0:
+            # STT 가속화 설정
+            self.config.stt_mock_interval = 1.0
+            self.config.stt_mock_mode = True
+
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication(sys.argv)
+
+            coordinator = AppCoordinator(app)
+
+            # 3. 회의 가동
+            session_id = f"e2e_session_{int(time.time())}"
+            self.context.start_meeting(session_id, title="E2E 테스트 하네스 회의")
+
+            # Flow Agent 갱신 주기 2.0초로 단축
+            if coordinator.flow_agent:
+                coordinator.flow_agent.check_interval_sec = 2.0
+
+            # 10초 가속 루프
+            start_time = time.time()
+            chat_sent = False
+
+            try:
+                while time.time() - start_time < 10.0:
+                    app.processEvents()
+                    time.sleep(0.1)
+
+                    # 5초 시점에 Chat Agent Q&A 질문 발송
+                    elapsed = time.time() - start_time
+                    if elapsed >= 5.0 and not chat_sent:
+                        logger.info("Injecting Chat Q&A query...")
+                        coordinator.chat_agent.ask_question("회의 중 가장 중요한 쟁점은 무엇인가요?")
+                        chat_sent = True
+            except Exception as e:
+                logger.error(f"Error in simulation loop: {e}")
+
+            # 회의 종료 트리거
+            logger.info("Ending meeting session...")
+            self.context.end_meeting()
+
+            # Report Agent 비동기 스레드 작업 완료 대기
+            report_wait_start = time.time()
+            while time.time() - report_wait_start < 3.0:
                 app.processEvents()
                 time.sleep(0.1)
-                
-                # 5초 시점에 Chat Agent Q&A 질문 발송
-                elapsed = time.time() - start_time
-                if elapsed >= 5.0 and not chat_sent:
-                    logger.info("Injecting Chat Q&A query...")
-                    coordinator.chat_agent.ask_question("회의 중 가장 중요한 쟁점은 무엇인가요?")
-                    chat_sent = True
-        except Exception as e:
-            logger.error(f"Error in simulation loop: {e}")
-            
-        # 8초 시점에 회의 종료 트리거 (이미 10초 경과)
-        logger.info("Ending meeting session...")
-        self.context.end_meeting()
-        
-        # Report Agent 비동기 스레드 작업 완료 대기
-        report_wait_start = time.time()
-        while time.time() - report_wait_start < 3.0:
-            app.processEvents()
-            time.sleep(0.1)
-            
-        # 4. 결과 데이터 수집
-        result_data = {
-            "session_id": session_id,
-            "transcripts_count": len(self.context.transcripts),
-            "final_mermaid": self.context.current_mermaid_code,
-            "chat_logs": self.context.db_manager.get_chat_logs(session_id),
-            "meeting_session": self.context.db_manager.get_session(session_id),
-        }
-        
-        # 5. 자원 회수 및 복원
-        coordinator.cleanup()
-        ClaudeCLIController.execute_command = original_execute
-        ClaudeCLIController.execute_command_stream = original_stream
-        AppConfig.load_default = original_load_default
-        if original_startfile:
-            os.startfile = original_startfile
-        else:
-            delattr(os, "startfile")
-            
-        return result_data
+
+            # 4. 결과 데이터 수집 (자원 정리 이전에 캡처)
+            result_data = {
+                "session_id": session_id,
+                "transcripts_count": len(self.context.transcripts),
+                "final_mermaid": self.context.current_mermaid_code,
+                "chat_logs": self.context.db_manager.get_chat_logs(session_id),
+                "meeting_session": self.context.db_manager.get_session(session_id),
+            }
+            return result_data
+        finally:
+            # 5. 자원 회수 및 전역 패치 복원 — 시뮬레이션이 도중에 실패하더라도 반드시 복원하여
+            #    클래스 레벨 몽키패치(execute_command/load_default/startfile)가 후속 테스트로 누수되지 않게 한다.
+            if coordinator is not None:
+                try:
+                    coordinator.cleanup()
+                except Exception as e:
+                    logger.error(f"Error during coordinator cleanup: {e}")
+            ClaudeCLIController.execute_command = original_execute
+            ClaudeCLIController.execute_command_stream = original_stream
+            AppConfig.load_default = original_load_default
+            if original_startfile:
+                os.startfile = original_startfile
+            elif hasattr(os, "startfile"):
+                delattr(os, "startfile")
 
 
 # === PyTest Test Cases ===

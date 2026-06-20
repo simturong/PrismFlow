@@ -430,8 +430,9 @@ E:\Tak\Gemini\PrismFlow\
    - 트레이 아이콘과 동일하게 앱 시작 시 메인 윈도우 우측 하단에 상주하도록 고정합니다.
    - 회의가 종료(`_on_meeting_ended`)될 때 `stt_worker`나 `flow_agent`는 멈추지만, Q&A 대화는 회의 종료 후에도 계속 가능하게 `chat_ui`는 그대로 유지합니다.
 2. **백그라운드 스레드 누수 방지 (`chat_agent.py`)**:
-   - `ChatAgent`에 `cleanup(self)` 메소드를 탑재하여 `ingest_timer.stop()`, 기동 중인 모든 QThread(`IngestWorker`, `ChatQNAWorker`) 인스턴스를 순회하며 `wait()` 및 종료 대기를 수행합니다.
-   - `main.py`의 `AppCoordinator`가 소멸하거나 앱 종료 시 이를 명시적으로 호출합니다.
+   - `ChatAgent`에 `cleanup(self)` 메소드를 탑재하여 기동 중인 모든 QThread(`ChatQNAWorker`) 인스턴스를 순회하며 `wait()` 및 종료 대기를 수행합니다.
+     (※ Phase 9-4에서 `IngestWorker`와 `ingest_timer`가 폐지되어 `cleanup`은 더 이상 타이머를 참조하지 않으며, DB·CLI 접근 중인 워커를 즉시 `terminate()`하지 않고 우선 `wait(5000)`으로 안전 합류시킵니다.)
+   - `main.py`의 `AppCoordinator`가 소멸하거나 앱 종료 시 이를 명시적으로 호출합니다. 각 정리 단계는 개별 try/except로 격리되어 한 단계의 실패가 나머지 스레드 종료를 가로막지 않습니다.
 3. **스마트 화면 감지 PPT 예외 격리 (`screen_detector.py`)**:
    - win32com을 사용한 `_get_active_ppt_info` 내부에서 `pywintypes.com_error` 등 모든 COM 예외를 완전 캡처하여 `None`을 리턴하게 함으로써, 백그라운드 탐지 루프가 PPT 오류에 의해 무한 루프 폭사하지 않도록 합니다.
 

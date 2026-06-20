@@ -132,10 +132,17 @@
 
 
 ## Phase 9: STT & Flow Agent 50% 성능 최적화
-- [/] 9-1: STT 화자 분리 아키텍처 경량화 (pyannote diarization pipeline 호출 제거 및 단독 embedding extractor 매칭 전환)
-- [/] 9-2: Flow Agent 증분 업데이트(Delta) 및 프롬프트 슬라이딩 윈도우/경량화 구현
-- [ ] 9-3: 최적화 검증용 단위 테스트 보강 및 전/후 벤치마크 정량 지표 측정
-- [/] 9-4: Chat Agent CLI 커넥션 에러 디버깅 (백그라운드 Ingest 제거, 원샷 슬라이딩 RAG 쿼리 및 지수 백오프 재시도 메커니즘 통합)
+- [x] 9-1: STT 화자 분리 아키텍처 경량화 (pyannote diarization pipeline 호출 제거 및 단독 embedding extractor 매칭 전환) — 발화당 무거운 추론 2회→1회(구조적 50% 감축), Diarization 핫패스 0회 호출
+- [x] 9-2: Flow Agent 증분 업데이트(Delta) 및 프롬프트 슬라이딩 윈도우/경량화 구현 — 입력 프롬프트 71.4% 절감, 추정 입력 토큰 74.8% 절감(발화 120개 누적 기준)
+- [x] 9-3: 최적화 검증용 단위 테스트 보강 및 전/후 벤치마크 정량 지표 측정 — `tests/test_benchmark.py` 신설, 50% 목표를 assert로 회귀 방지 (상세: [docs/phase9_benchmark_report.md](docs/phase9_benchmark_report.md))
+- [x] 9-4: Chat Agent CLI 커넥션 에러 디버깅 (백그라운드 Ingest 제거, 원샷 슬라이딩 RAG 쿼리 및 지수 백오프 재시도 메커니즘 통합) — 백그라운드 CLI 기동 100% 제거(60분 회의 20회→0회)
+
+### Phase 9 안정화/상용화 보강 (테스트 정합 + 디버깅)
+- [x] 깨진 단위 테스트 정상화: 아키텍처 변경(Ingest 폐지·Diarization 제거)에 맞춰 `test_chat`/`test_stt`/`test_cli`/e2e 리팩토링 (56 passed, 1 skipped)
+- [x] `ChatAgent.cleanup` 치명 버그 수정: 폐지된 `ingest_timer` 참조로 인한 `AttributeError`(앱 종료 시마다 발생 + 스레드 누수) 제거 → 간헐적 SQLite access violation(세그폴트) 해소
+- [x] `cli_controller` 재시도 계약 정비: 실행 파일 부재 등 영구 오류는 즉시 `RuntimeError`로 전파(불필요한 3초 재시도 제거), 타임아웃은 즉시 `TimeoutError` 전파
+- [x] 테스트 격리 결함 수정: `MeetingContext` 싱글톤 DB 누수로 인한 순서 의존 플래키 제거(conftest autouse 격리) — 실제 사용자 DB 오염 방지
+- [x] DB 다중 스레드 동시성 하드닝: WAL 저널 모드 + busy_timeout 적용, 전체 스위트 3회 연속 무결 통과(세그폴트 0회)
 
 
 

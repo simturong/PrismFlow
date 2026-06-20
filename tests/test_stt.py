@@ -79,38 +79,49 @@ def test_stt_mock_mode_pipeline(q_app, mock_stt_config, monkeypatch):
 def test_stt_real_mode_error_fallback(q_app, mock_stt_config, monkeypatch):
     """실제 모드 구동 시 모델 로드 실패가 error 시그널로 전파되고 스레드가 안전 종료되는지 검증.
 
-    (엔진/모델이 설치된 환경에서도 결정적으로 실패하도록 존재하지 않는 모델 경로를 강제한다.)
+    무거운 실엔진(OpenVINO) 콜드 임포트나 마이크 하드웨어 유무에 따라 결과가 흔들리지 않도록,
+    AudioCapture는 성공으로 가장하고 모델 로드만 결정적으로 실패하도록 주입하여
+    "모델 로드 실패 → error 시그널 → 스레드 안전 종료" 경로만 결정적으로 검증한다.
     """
+    import prismflow.agents.stt.stt_agent as stt_mod
+
     mock_stt_config.stt_mock_mode = False
-    mock_stt_config.whisper_model_name = "definitely-nonexistent-model-xyz"
     monkeypatch.setattr(AppConfig, "load_default", lambda: mock_stt_config)
 
+    # 1. 오디오 캡처는 성공한 것으로 가장 (PyAudio/마이크 의존성 제거 → 결정성 확보)
+    class _FakeCap:
+        def __init__(self, *args, **kwargs):
+            pass
+        def start(self):
+            return True
+        def stop(self):
+            pass
+        def get_audio_chunk(self):
+            return None
+    monkeypatch.setattr(stt_mod, "AudioCapture", _FakeCap)
+
     worker = RealTimeEngineWorker()
-    
+
+    # 2. 무거운 실엔진 로드를 제거하고 결정적으로 모델 로드 실패를 주입
+    def _raise_load():
+        raise RuntimeError("강제 모델 로드 실패 (테스트)")
+    monkeypatch.setattr(worker, "_load_openvino_models", _raise_load)
+
     error_msgs = []
     worker.error_occurred.connect(error_msgs.append)
-    
-    # 스레드 시작
+
     worker.start()
-    
-    # 스레드가 기동될 때까지 대기
-    for _ in range(50):
-        if worker.isRunning():
-            break
-        time.sleep(0.01)
-    
-    # run_real_loop에서 예외가 나서 error_occurred 시그널 방출 후 스레드가 종료될 때까지 대기
-    # 최대 3.0초 대기 (PyAudio 마이크 초기화 오버헤드 감안)
-    for _ in range(300):
+
+    # 모델 로드 실패 후 error_occurred 방출 및 스레드 안전 종료를 대기 (최대 2.0초면 충분)
+    for _ in range(200):
         q_app.processEvents()
         time.sleep(0.01)
         if not worker.isRunning():
             break
-            
+
     assert worker.isRunning() is False
     q_app.processEvents()  # 시그널 배달 보장
     assert len(error_msgs) > 0
-    # 환경에 따라 라이브러리 미설치 에러 또는 오디오 장치 에러가 잡혀야 함
     assert any("실패" in msg or "없습니다" in msg or "오류" in msg for msg in error_msgs)
 
 
