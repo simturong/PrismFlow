@@ -9,6 +9,10 @@
   - `tests/test_core.py`에 `test_context_auto_correction_and_speaker_profile` 단위 테스트를 추가하여, 교정 사전에 의한 텍스트 실시간 치환과 화자 캐시 이름 매핑이 메모리 및 DB에 안전하게 보존되는지 검증했습니다.
 - **E2E 하네스 어설션 갱신**:
   - 로컬 룰베이스 Fallback이 활성화되는 동작을 올바르게 검증하기 위해 `tests/e2e_harness.py`의 세션 리밋 시나리오 내 어설션을 `assert "LocalFallback" in results["final_mermaid"]`로 업데이트했습니다.
+- **오버레이 드래그 크기 조절(Resize) 및 제어 버튼 구현**:
+  - `TranslucentOverlay` 공통 베이스 클래스에 가장자리 8px 이내 감지 마우스 드래그 리사이징 기능을 탑재했습니다.
+  - 우측 상단에 닫기(Close), 최소화(Minimize), 최대화/복원(Maximize/Restore)을 수행하는 플로팅 버튼 위젯(`control_widget`)을 추가하고, 창 크기가 변할 때마다 자동으로 우측 상단 여백을 맞춰 이동하도록 설계했습니다.
+  - `ChatUI` 및 `FlowUI` 의 레이아웃 마진(Margins)을 조절하여 버튼 영역과 컴포넌트가 겹치지 않도록 조율하고, `ChatUI`에서 중복되던 닫기 버튼은 완전히 삭제했습니다.
 - **회귀 테스트 100% 검증**:
   - 전체 `pytest tests/` 실행 결과 `51 passed, 3 skipped`로 100% 녹색(Pass) 통과를 확인했습니다.
   - `docs/task.md` 및 `task.md` 아티팩트 상의 Phase 7의 모든 항목을 `[x]`(완료) 처리했습니다.

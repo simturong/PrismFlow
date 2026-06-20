@@ -26,7 +26,7 @@ class FlowUI(TranslucentOverlay):
         
         # 내부 레이아웃 설정
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setContentsMargins(10, 32, 10, 10)
         
         # QWebEngineView 생성 및 설정
         self.web_view = QWebEngineView(self)

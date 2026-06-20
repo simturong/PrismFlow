@@ -105,7 +105,7 @@ class ChatUI(TranslucentOverlay):
         
         # 2. 내부 레이아웃
         layout = QVBoxLayout(self.container)
-        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setContentsMargins(12, 32, 12, 12)
         layout.setSpacing(8)
         
         # 3. 상단 타이틀바
@@ -119,26 +119,8 @@ class ChatUI(TranslucentOverlay):
             background: transparent;
         """)
         
-        self.close_btn = QPushButton("×", self.container)
-        self.close_btn.setFixedSize(20, 20)
-        self.close_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent;
-                color: rgba(255, 255, 255, 0.6);
-                border: none;
-                font-size: 16px;
-                font-weight: bold;
-                padding: 0px;
-            }
-            QPushButton:hover {
-                color: #ff5555;
-            }
-        """)
-        self.close_btn.clicked.connect(self.hide)
-        
         title_layout.addWidget(self.title_label)
         title_layout.addStretch()
-        title_layout.addWidget(self.close_btn)
         layout.addLayout(title_layout)
         
         # 4. 중앙 대화 히스토리 (QTextBrowser)
