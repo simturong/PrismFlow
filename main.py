@@ -53,6 +53,7 @@ class AppCoordinator:
         # 싱글톤 컨텍스트 상태 변화 연결
         self.context.signals.meeting_started.connect(self._on_meeting_started)
         self.context.signals.meeting_ended.connect(self._on_meeting_ended)
+        self.context.signals.transcript_updated.connect(self._on_transcript_updated)
         
         # 오버레이 초기 위치 배치
         screen = self.app.primaryScreen().geometry()
@@ -84,7 +85,38 @@ class AppCoordinator:
         
         # 3. STT Worker (Mock 발화 또는 Real 오디오 추론) 기동
         self.stt_worker = RealTimeEngineWorker()
+        self.stt_worker.status_changed.connect(self._on_stt_status_changed)
+        self.stt_worker.error_occurred.connect(self._on_stt_error)
         self.stt_worker.start()
+
+    def _on_stt_status_changed(self, status: str):
+        logger.info(f"STT Engine Status changed: {status}")
+        if status == "loading":
+            msg = "엔진 준비 중... (OpenVINO 로컬 가중치 로딩 중, 10~30초 소요)"
+            self.flow_ui.update_status_text(f"⏳ {msg}")
+            self.tray.setToolTip(f"PrismFlow AI Assistant - {msg}")
+            self.tray.showMessage("PrismFlow", "STT 엔진을 백그라운드에서 초기화하는 중입니다. 마이크는 이미 캡처를 시작하여 로딩 중 발화도 안전하게 버퍼링됩니다.", QSystemTrayIcon.Information, 4000)
+        elif status == "running":
+            msg = "엔진 준비 완료. 음성 대기 중..."
+            self.flow_ui.update_status_text(f"🎙️ {msg}")
+            self.tray.setToolTip(f"PrismFlow AI Assistant - {msg}")
+            self.tray.showMessage("PrismFlow", "STT 엔진 초기화가 완료되었습니다. 대화 내용을 실시간 인식합니다.", QSystemTrayIcon.Information, 3000)
+        elif status == "idle":
+            self.flow_ui.update_status_text("회의를 대기 중입니다.")
+            self.tray.setToolTip("PrismFlow AI Assistant")
+        elif status == "error":
+            msg = "STT 엔진 오류 발생"
+            self.flow_ui.update_status_text(f"❌ {msg} (설정 혹은 모델 존재를 확인하세요)")
+            self.tray.setToolTip(f"PrismFlow AI Assistant - {msg}")
+
+    def _on_stt_error(self, err_msg: str):
+        logger.error(f"STT Worker Error: {err_msg}")
+        self.tray.showMessage("PrismFlow 에러", err_msg, QSystemTrayIcon.Warning, 5000)
+
+    def _on_transcript_updated(self, item: dict):
+        speaker = item.get("speaker", "Speaker")
+        text = item.get("text", "")
+        self.flow_ui.update_status_text(f"💬 {speaker}: {text}")
 
     def _on_screen_transition(self, ttype: str, info: object):
         logger.info(f"Screen transition detected: Type={ttype}, Info={info}")
@@ -148,17 +180,24 @@ def main():
     
     # 로컬 Pretendard 폰트 로드 시도
     import os
-    from PySide6.QtGui import QFontDatabase
+    from PySide6.QtGui import QFontDatabase, QFont
     
     font_path = os.path.join(os.path.dirname(__file__), "prismflow", "resources", "Pretendard-Regular.ttf")
+    font_family = "Segoe UI"
     if os.path.exists(font_path):
         font_id = QFontDatabase.addApplicationFont(font_path)
         if font_id != -1:
             families = QFontDatabase.applicationFontFamilies(font_id)
             if families:
-                logger.info(f"Loaded local font: {families[0]}")
+                font_family = families[0]
+                logger.info(f"Loaded local font: {font_family}")
     else:
         logger.debug("Local Pretendard font file not found. Fallback to system default fonts.")
+        
+    # 명시적 기본 폰트 및 포인트 크기 설정하여 QFont::setPointSize <= 0 (-1) 경고 방지
+    app_font = QFont(font_family)
+    app_font.setPointSize(9)
+    app.setFont(app_font)
     
     # 트레이 호환성 검증
     if not QSystemTrayIcon.isSystemTrayAvailable():

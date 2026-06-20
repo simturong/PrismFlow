@@ -2,7 +2,7 @@ import os
 import base64
 import logging
 from pathlib import Path
-from PySide6.QtWidgets import QVBoxLayout
+from PySide6.QtWidgets import QVBoxLayout, QLabel
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -22,7 +22,7 @@ class FlowUI(TranslucentOverlay):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("PrismFlow - Meeting Map")
-        self.resize(700, 550)
+        self.resize(700, 570)
         
         # 내부 레이아웃 설정
         layout = QVBoxLayout(self)
@@ -40,10 +40,33 @@ class FlowUI(TranslucentOverlay):
         # HTML 로드 (로컬 mermaid.min.js 로드를 위해 file:// baseUrl 지정)
         self.web_view.setHtml(get_mermaid_html(), _RESOURCES_BASE_URL)
         layout.addWidget(self.web_view)
+
+        # 실시간 상태 및 전사 자막 표시용 레이블
+        self.status_label = QLabel(self)
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("""
+            QLabel {
+                background-color: rgba(20, 20, 25, 200);
+                color: #e0e0e0;
+                border: 1px solid rgba(255, 255, 255, 15);
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+                font-size: 13px;
+            }
+        """)
+        self.status_label.setText("회의를 대기 중입니다.")
+        layout.addWidget(self.status_label)
         
     def reset_diagram(self):
         """회의 종료 시 흐름도 오버레이를 초기 안내 화면으로 되돌립니다."""
         self.web_view.setHtml(get_mermaid_html(), _RESOURCES_BASE_URL)
+        self.status_label.setText("회의를 대기 중입니다.")
+
+    def update_status_text(self, text: str):
+        """엔진 상태 텍스트를 실시간 업데이트합니다."""
+        self.status_label.setText(text)
 
     def update_diagram(self, mermaid_code: str):
         """새로운 Mermaid 코드를 수신하여 깜빡임 없이 동적으로 렌더링합니다.

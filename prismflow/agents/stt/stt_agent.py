@@ -1,9 +1,12 @@
 import time
+import logging
 import numpy as np
 from PySide6.QtCore import QThread, Signal
 from prismflow.core.context import MeetingContext
 from prismflow.core.config import AppConfig
 from .audio import MOCK_DIALOGUES, AudioCapture
+
+logger = logging.getLogger(__name__)
 
 class RealTimeEngineWorker(QThread):
     status_changed = Signal(str) # "running", "idle", "error"
@@ -18,8 +21,13 @@ class RealTimeEngineWorker(QThread):
         # 실제 추론 모델 홀더 (OpenVINO 관련)
         self.whisper_model = None
         self.diarization_model = None
+        self.embedding_extractor = None
         self._device = None
         self._whisper_cfg = None
+        
+        # 화자 매칭 정보
+        self.speaker_embeddings = {}
+        self.speaker_count = 0
         
         # Mock 전용 주기 설정 (테스트 시 짧게 조정 가능하도록 config 확인 및 기본 15.0초 지정)
         self.mock_interval = getattr(self.config, "stt_mock_interval", 15.0)
@@ -71,25 +79,36 @@ class RealTimeEngineWorker(QThread):
         self.status_changed.emit("idle")
 
     def _run_real_loop(self):
-        # 1. OpenVINO 런타임 및 가중치 확인 로드
-        try:
-            self._load_openvino_models()
-        except Exception as e:
-            self.error_occurred.emit(f"OpenVINO 모델 로드 실패: {str(e)}")
-            self.status_changed.emit("error")
-            self._running = False
-            return
+        # 화자 매칭 데이터 초기화
+        self.speaker_embeddings = {}
+        self.speaker_count = 0
 
-        # 2. 마이크 장치 준비
+        # 1. 마이크 장치 준비 선행
         audio_cap = AudioCapture(
             sample_rate=self.config.audio_sample_rate,
             channels=1
         )
+        # 로딩 상태 진입 알림
+        self.status_changed.emit("loading")
+        
         if not audio_cap.start():
             self.error_occurred.emit("PyAudio 마이크 입력을 초기화할 수 없습니다.")
             self.status_changed.emit("error")
             self._running = False
             return
+
+        # 2. OpenVINO 런타임 및 가중치 확인 로드 (오디오는 이미 큐에 버퍼링 중)
+        try:
+            self._load_openvino_models()
+        except Exception as e:
+            audio_cap.stop()
+            self.error_occurred.emit(f"OpenVINO 모델 로드 실패: {str(e)}")
+            self.status_changed.emit("error")
+            self._running = False
+            return
+
+        # 준비 완료
+        self.status_changed.emit("running")
 
         try:
             self._run_vad_segmented_loop(audio_cap)
@@ -243,7 +262,7 @@ class RealTimeEngineWorker(QThread):
         self._load_diarization_if_available()
 
     def _load_diarization_if_available(self):
-        """HF 토큰이 있고 pyannote가 설치된 경우에만 화자분리 파이프라인을 로드한다."""
+        """HF 토큰이 있고 pyannote가 설치된 경우에만 화자분리 파이프라인과 임베딩 모델을 로드한다."""
         token = getattr(self.config, "hf_token", "") or ""
         if not token:
             return
@@ -253,7 +272,7 @@ class RealTimeEngineWorker(QThread):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                from pyannote.audio import Pipeline
+                from pyannote.audio import Pipeline, Model, Inference
         except ImportError:
             return
         try:
@@ -270,6 +289,15 @@ class RealTimeEngineWorker(QThread):
             # 토큰 무효/약관 미동의/네트워크 오류 등은 단일 화자 폴백으로 흡수
             self.diarization_model = None
 
+        try:
+            # Speaker Embedding Model 로드 (wespeaker voxceleb)
+            emb_model = Model.from_pretrained(
+                "pyannote/wespeaker-voxceleb-resnet34-LM", token=token
+            )
+            self.embedding_extractor = Inference(emb_model, window="whole")
+        except Exception as e:
+            self.embedding_extractor = None
+
     def _process_inference(self, audio_window) -> tuple:
         """발화 오디오(float32, 16kHz, mono)를 전사하고 화자를 식별해 (speaker, text)를 반환한다."""
         text = ""
@@ -283,7 +311,11 @@ class RealTimeEngineWorker(QThread):
 
         speaker = "Speaker_00"
         if text and self.diarization_model is not None:
-            speaker = self._diarize_dominant_speaker(audio_window)
+            local_speaker = self._diarize_dominant_speaker(audio_window)
+            if self.embedding_extractor is not None:
+                speaker = self._match_global_speaker(audio_window, local_speaker)
+            else:
+                speaker = local_speaker
         return speaker, text
 
     def _diarize_dominant_speaker(self, audio_window) -> str:
@@ -310,3 +342,60 @@ class RealTimeEngineWorker(QThread):
         except Exception:
             pass
         return "Speaker_00"
+
+    def _match_global_speaker(self, audio_window, local_speaker: str) -> str:
+        """발화 오디오의 임베딩을 추출하여 기존 전역 화자 임베딩 데이터베이스와 비교 매칭한다.
+        
+        임계값(기본 0.55)을 넘는 가장 유사한 전역 화자를 찾고,
+        매칭되면 해당 화자의 임베딩을 갱신(rho_update=0.1 블렌딩)한다.
+        매칭되지 않으면 새로운 전역 화자로 추가한다.
+        """
+        import torch
+        try:
+            # numpy array (float32) -> torch tensor (shape: 1 x num_samples)
+            waveform = torch.from_numpy(np.ascontiguousarray(audio_window)).unsqueeze(0)
+            
+            # 임베딩 추출 (2D array, shape: 1 x embedding_dim)
+            emb_res = self.embedding_extractor({"waveform": waveform, "sample_rate": self.config.audio_sample_rate})
+            new_emb = np.array(emb_res).flatten()
+            
+            # 정규화
+            new_emb_norm = np.linalg.norm(new_emb)
+            if new_emb_norm < 1e-6:
+                return "Speaker_00"
+            new_emb = new_emb / new_emb_norm
+            
+            best_speaker = None
+            best_sim = -1.0
+            
+            # 기존 전역 화자들과 코사인 유사도 비교
+            for spk_id, ref_emb in self.speaker_embeddings.items():
+                sim = float(np.dot(new_emb, ref_emb))
+                if sim > best_sim:
+                    best_sim = sim
+                    best_speaker = spk_id
+            
+            # 임계값: 0.55 이상이면 동일 화자로 판정
+            similarity_threshold = 0.55
+            
+            if best_speaker is not None and best_sim >= similarity_threshold:
+                # 기존 화자에 매칭: 임베딩 점진적 업데이트 (rho_update=0.1)
+                rho = 0.1
+                updated_emb = (1 - rho) * self.speaker_embeddings[best_speaker] + rho * new_emb
+                updated_emb_norm = np.linalg.norm(updated_emb)
+                if updated_emb_norm > 1e-6:
+                    self.speaker_embeddings[best_speaker] = updated_emb / updated_emb_norm
+                
+                logger.info(f"Speaker matched globally: Local {local_speaker} -> Global {best_speaker} (Similarity: {best_sim:.3f})")
+                return best_speaker
+            else:
+                # 새로운 화자 추가
+                self.speaker_count += 1
+                new_spk_id = f"Speaker_{self.speaker_count:02d}"
+                self.speaker_embeddings[new_spk_id] = new_emb
+                logger.info(f"New global speaker detected: {new_spk_id} (Similarity: {best_sim:.3f})")
+                return new_spk_id
+                
+        except Exception as e:
+            logger.warning(f"Global speaker matching error, fallback to local speaker: {e}")
+            return local_speaker

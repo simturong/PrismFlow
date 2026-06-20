@@ -57,7 +57,7 @@ def test_cli_controller_session_persistence():
 
 def test_cli_controller_invalid_command():
     """존재하지 않는 명령어를 호출했을 때 예외 발생 테스트"""
-    config = AppConfig(claude_cli_cmd="invalid_non_existent_command_12345")
+    config = AppConfig(db_path="non_existent_db_for_test.db", claude_cli_cmd="invalid_non_existent_command_12345")
     controller = ClaudeCLIController(config)
     
     session_id = str(uuid.uuid4())

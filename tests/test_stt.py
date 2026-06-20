@@ -100,8 +100,8 @@ def test_stt_real_mode_error_fallback(q_app, mock_stt_config, monkeypatch):
         time.sleep(0.01)
     
     # run_real_loop에서 예외가 나서 error_occurred 시그널 방출 후 스레드가 종료될 때까지 대기
-    # 최대 1.0초 대기
-    for _ in range(100):
+    # 최대 3.0초 대기 (PyAudio 마이크 초기화 오버헤드 감안)
+    for _ in range(300):
         q_app.processEvents()
         time.sleep(0.01)
         if not worker.isRunning():
@@ -189,4 +189,45 @@ def test_live_whisper_load_and_infer(temp_config, monkeypatch):
     spk, txt = worker._process_inference(np.zeros(int(3.0 * temp_config.audio_sample_rate), dtype=np.float32))
     assert spk == "Speaker_00"
     assert isinstance(txt, str)
+
+
+def test_global_speaker_matching(temp_config, monkeypatch):
+    """임베딩 코사인 유사도 전역 매칭 알고리즘 검증"""
+    import numpy as np
+    monkeypatch.setattr(AppConfig, "load_default", lambda: temp_config)
+    worker = RealTimeEngineWorker()
+    
+    # 임베딩 추출기 모크: 입력 오디오의 첫 번째 원소를 보고 시뮬레이션된 임베딩 반환
+    def mock_extractor(data):
+        waveform = data["waveform"]
+        first_val = float(waveform[0, 0])
+        if abs(first_val - 1.0) < 0.01:
+            # 화자 A 임베딩
+            return np.array([[1.0, 0.0]], dtype=np.float32)
+        elif abs(first_val - 1.1) < 0.01:
+            # 화자 A와 유사한 임베딩 (코사인 유사도 0.99)
+            return np.array([[0.995, 0.099]], dtype=np.float32)
+        else:
+            # 화자 B 임베딩 (화자 A와 수직, 코사인 유사도 0.0)
+            return np.array([[0.0, 1.0]], dtype=np.float32)
+            
+    worker.embedding_extractor = mock_extractor
+    
+    audio_a1 = np.ones(100, dtype=np.float32) * 1.0
+    audio_a2 = np.ones(100, dtype=np.float32) * 1.1
+    audio_b = np.ones(100, dtype=np.float32) * 2.0
+    
+    # 1. 화자 A 매칭 (첫 화자이므로 신규 추가)
+    spk1 = worker._match_global_speaker(audio_a1, "Speaker_00")
+    assert spk1 == "Speaker_01"
+    assert "Speaker_01" in worker.speaker_embeddings
+    
+    # 2. 유사 화자 매칭 (유사도가 0.55 이상이므로 Speaker_01로 통합)
+    spk2 = worker._match_global_speaker(audio_a2, "Speaker_00")
+    assert spk2 == "Speaker_01"
+    
+    # 3. 다른 화자 매칭 (유사도가 0.0이므로 임계값 미만 -> Speaker_02로 추가)
+    spk3 = worker._match_global_speaker(audio_b, "Speaker_01")
+    assert spk3 == "Speaker_02"
+    assert "Speaker_02" in worker.speaker_embeddings
 
