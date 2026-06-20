@@ -10,6 +10,8 @@ from prismflow.core.screen_detector import ScreenTransitionDetector
 from prismflow.ui_common.tray import SystemTrayManager
 from prismflow.agents.flow.flow_ui import FlowUI
 from prismflow.agents.flow.flow_agent import FlowAgent
+from prismflow.agents.chat.chat_agent import ChatAgent
+from prismflow.agents.chat.chat_ui import ChatUI
 from prismflow.agents.stt.stt_agent import RealTimeEngineWorker
 
 # 로그 설정
@@ -33,6 +35,10 @@ class AppCoordinator:
         self.tray = SystemTrayManager()
         self.flow_ui = FlowUI()
         
+        # Chat Agent 및 UI 기동
+        self.chat_agent = ChatAgent(self.context, self.cli_controller)
+        self.chat_ui = ChatUI(self.chat_agent)
+        
         # 에이전트 및 검출기 홀더
         self.stt_worker = None
         self.flow_agent = None
@@ -42,15 +48,23 @@ class AppCoordinator:
         self.context.signals.meeting_started.connect(self._on_meeting_started)
         self.context.signals.meeting_ended.connect(self._on_meeting_ended)
         
-        # 오버레이 초기 위치 배치 (화면 우측 상단 여백)
+        # 오버레이 초기 위치 배치
         screen = self.app.primaryScreen().geometry()
-        x = screen.width() - self.flow_ui.width() - 40
-        y = 50
-        self.flow_ui.move(x, y)
+        
+        # Flow UI (우측 상단)
+        flow_x = screen.width() - self.flow_ui.width() - 40
+        flow_y = 50
+        self.flow_ui.move(flow_x, flow_y)
         self.flow_ui.show()
+        
+        # Chat UI (우측 하단)
+        chat_x = screen.width() - self.chat_ui.width() - 40
+        chat_y = screen.height() - self.chat_ui.height() - 100
+        self.chat_ui.move(chat_x, chat_y)
+        self.chat_ui.show()
 
     def _on_meeting_started(self, session_id: str):
-        logger.info(f"Meeting session {session_id} started. Launching Phase 3 agents...")
+        logger.info(f"Meeting session {session_id} started. Launching Phase 3 & 4 agents...")
         
         # 1. 스마트 화면 감지기 기동 (확인 테스트 편의를 위해 5.0초 디바운스로 설정)
         self.screen_detector = ScreenTransitionDetector(debounce_sec=5.0)
@@ -91,8 +105,43 @@ class AppCoordinator:
         # UI 초기 메시지 리셋
         self.flow_ui.web_view.setHtml(self.flow_ui.web_view.page().html() or "")
 
+    def cleanup(self):
+        """프로그램 종료 시 백그라운드 리소스와 스레드를 안전하게 정리합니다."""
+        logger.info("Cleaning up coordinator resources...")
+        if self.chat_agent:
+            self.chat_agent.cleanup()
+        if self.stt_worker:
+            try:
+                self.stt_worker.stop()
+            except Exception:
+                pass
+        if self.flow_agent:
+            try:
+                self.flow_agent.stop()
+            except Exception:
+                pass
+        if self.screen_detector:
+            try:
+                self.screen_detector.stop()
+            except Exception:
+                pass
+
 def main():
     app = QApplication(sys.argv)
+    
+    # 로컬 Pretendard 폰트 로드 시도
+    import os
+    from PySide6.QtGui import QFontDatabase
+    
+    font_path = os.path.join(os.path.dirname(__file__), "prismflow", "resources", "Pretendard-Regular.ttf")
+    if os.path.exists(font_path):
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id != -1:
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                logger.info(f"Loaded local font: {families[0]}")
+    else:
+        logger.debug("Local Pretendard font file not found. Fallback to system default fonts.")
     
     # 트레이 호환성 검증
     if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -105,7 +154,14 @@ def main():
     coordinator = AppCoordinator(app)
     coordinator.tray.show()
     
+    # 종료 시 자원 회수 핸들러 등록
+    app.aboutToQuit.connect(coordinator.cleanup)
+    
     sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
+
 
 if __name__ == "__main__":
     main()

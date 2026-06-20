@@ -147,3 +147,17 @@ def test_context_db_integration(q_app, tmp_path):
     sess_data_end = db_manager.get_session(session_id)
     assert sess_data_end["end_time"] is not None
 
+def test_config_db_override(tmp_path):
+    """AppConfig 생성 시 SQLite DB에 저장된 claude_cli_cmd가 정상적으로 오버라이드되는지 검증"""
+    db_file = tmp_path / "test_override.db"
+    
+    # 1. DB에 설정을 먼저 임위로 주입하기 위해 DatabaseManager 사용
+    db_manager = DatabaseManager(str(db_file))
+    db_manager.set_setting("claude_cli_cmd", "C:\\custom\\path\\to\\claude.exe")
+    
+    # 2. AppConfig 로드
+    config = AppConfig(db_path=str(db_file))
+    
+    # DB에 저장되어 있던 값이 config.claude_cli_cmd에 성공적으로 주입(오버라이드)되었는지 확인
+    assert config.claude_cli_cmd == "C:\\custom\\path\\to\\claude.exe"
+

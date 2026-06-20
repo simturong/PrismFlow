@@ -14,7 +14,8 @@
 | **Phase 1: 트레이 및 GUI 스캐폴딩** | ✅ 완료 | 2026-06-20 | 트레이 메뉴 구성 및 투명 오버레이 윈도우(페이드/드래그) 빌드 |
 | **Phase 2: SQLite DB & STT 가동** | ✅ 완료 | 2026-06-20 | 데이터베이스 CRUD 작성 및 실시간 STT Mock 에뮬레이터 검증 |
 | **Phase 3: Flow & Mermaid 연동** | ✅ 완료 | 2026-06-20 | Claude CLI 비차단 파이프 연결 및 Mermaid 렌더링 검증 |
-| **Phase 4: Chat RAG & 질문 통합** | 대기 중 | - | 최근 대화 context 주입 RAG 구현 및 비동기 스트리밍 연결 |
+| **Phase 4: Chat RAG & 질문 통합** | ✅ 완료 | 2026-06-20 | 최근 대화 context 주입 RAG 구현 및 비동기 스트리밍 연결 |
+| **Phase 4-3: 설정 및 화면로그 고도화** | ✅ 완료 | 2026-06-20 | 설정 GUI 다이얼로그, 화면 DB 적재, CLI 경로 오버라이드 및 폰트 로드 |
 | **Phase 5: Docs 정리 및 완성** | 대기 중 | - | Opus 활용 최종 markdown 회의록 자동 저장 및 실행 테스트 |
 
 ---
@@ -117,3 +118,47 @@
 #### 🔍 이슈 3: 슬라이드 전환 및 픽셀 변화 감지의 리소스 폭주와 디바운싱
 - **상황**: 화면 전환을 1초 주기로 실시간 캡처해 OCR이나 AI 전사로 처리하면 리소스 사용량이 폭주하고, 사용자가 슬라이드를 빠르게 스킵하며 넘어갈 때 불필요한 연쇄 캡처 이벤트가 발생하는 낭비가 초래됨.
 - **결정**: 화면 변화가 감지되는 즉시 이벤트를 쏘지 않고, `QTimer` 기반의 **30초 디바운싱 타이머**를 가동하여 추가 변화가 없이 완전히 고정(Settled)되었을 때만 최종 화면으로 확정되게 필터링함. 또한 범용 캡처본을 **32x32 초소형 크기**로 줄여 픽셀 MSE(Mean Squared Error) 연산을 적용함으로써 CPU 점유율을 1% 미만으로 극한까지 최적화함.
+
+---
+
+## 🚀 Phase 4: Chat RAG & 질문 통합 (2026-06-20)
+
+### 1. 주요 구현 내용
+- `ChatAgent`: 백그라운드 3분 주기의 신규 대화 자동 주입(Context Ingestion) 루프와 Q&A 스레드를 탑재한 비동기 에이전트 개발. 질문 시점에는 최근 주입 완료 시점 이후의 미주입된 잔여 발화만 질문에 병합해 넘김으로써 CLI 토큰 소모를 극적으로 절감하고 응답 시간을 단축함.
+- `ChatUI`: `TranslucentOverlay`를 상속하고 QSS Glassmorphism을 적용한 420x580 고정 크기의 우측 하단 상주형 대화 팝업 GUI 개발. 자체 정규식 기반의 Markdown-to-HTML 렌더러와 펄스 효과 답변 대기 로딩 마이크로 애니메이션 연동.
+- `cli_controller.py` 확장: 실시간 스트리밍 출력을 줄 단위로 비차단 획득하기 위한 `execute_command_stream` generator 메서드 추가.
+
+### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
+
+#### 🔍 이슈 1: 최상위 윈도우 투명도 속성 전파와 QSS 둥근 모서리 렌더링 깨짐
+- **상황**: 최상위 `QWidget`에 직접 스타일시트로 `border-radius: 14px;`과 반투명 배경을 입히면, Windows OS의 창 마스크 렌더링 한계로 인해 모서리 주변에 검은색 잔상이 끼거나 스타일시트 테두리가 둥글게 깎이지 않는 현상이 관측됨.
+- **결정**: `TranslucentOverlay`에서 직접 백그라운드를 그리던 `paintEvent` 기본 동작을 비우고, 내부에 여백 0의 레이아웃을 통해 QFrame `chat-container`를 배치함. 이 프레임 위젯에만 QSS 스타일시트를 적용하여 배경과 실버 그라데이션 보더를 렌더링함으로써 투명 둥근 모서리를 정밀하고 노이즈 없이 표현하는 데 성공함.
+
+#### 🔍 이슈 2: 비가시 상태 위젯의 `isVisible()` 리턴값 오류로 인한 테스트 실패
+- **상황**: UI 통합 테스트인 `test_chat_ui_integration` 실행 도중, 질문을 전송한 뒤 `assert ui.loading_label.isVisible() is True` 검사에서 가시성이 확보되었음에도 `False`로 인식되며 실패함.
+- **원인**: Qt 프레임워크 명세 상 부모 창이 완전히 `show()` 되지 않은 상태라면, 자식 컴포넌트가 개념적으로 보이기 설정되어 있어도 화면 상에 물리적으로는 그려지지 않았으므로 `isVisible()`이 `False`를 리턴함.
+- **결정**: 테스트 쿼리 전송 전에 `ui.show()`를 먼저 명시적으로 호출해 주어 윈도우 가시 상태를 활성화함으로써, 자식 컴포넌트의 가시성 상태가 정상적으로 검출되도록 수정해 테스트를 통과시킴.
+
+#### 🔍 이슈 3: 최초 세션 기동 시 레이스 컨디션 방지를 위한 `session_initialized` 시그널 도입
+- **상황**: 회의가 켜지자마자 `ChatAgent`는 Claude CLI 세션을 최초 생성하기 위해 비동기 찔러넣기를 시도하는데, 그 초기화가 채 완료되기 전에 사용자가 질문 입력 후 Enter를 누를 경우, 세션 미설정 및 CLI 호출 동시성 충돌로 비차단 통신 파이프라인 에러가 초래됨.
+- **결정**: 에이전트 생성자에 `session_initialized` 시그널을 추가하고, `ChatUI` 시작 시에는 입력 필드를 비활성화 및 안내 문구("세션 초기화 중...")로 잠가 두었다가 세션 준비 완료 신호를 받는 즉시 입력창을 동적으로 개방하도록 설계해 인터랙션 충돌을 방지함.
+
+---
+
+## 🚀 Phase 4-3: 추가 최적화 및 설정/환경 고도화 (2026-06-20)
+
+### 1. 주요 구현 내용
+- `screen_logs` 마이그레이션 및 적재: SQLite 데이터베이스에 `screen_logs` 테이블을 신설하여, 감지된 화면 전환 정보(PPT의 `"파일명|페이지번호"`, GENERIC의 32x32 픽셀 데이터 콤마 스트링)를 실시간 영구 적재하는 `add_screen_log` 및 `get_screen_logs` CRUD를 구현하고 `MeetingContext`와 자동 연동함.
+- `SettingsDialog`: Whisper 모델 크기, 하드웨어 가속, VAD 임계값, Claude CLI 오버라이드 경로를 통합 제어하고 DB에 영구 upsert하는 QDialog 기반 Glassmorphism 설정 GUI 빌드 및 트레이 "설정" 메뉴 연동.
+- Claude CLI 경로 동적 오버라이드: 프로그램 기동(`AppConfig.__post_init__`) 시 sqlite3를 통해 settings의 `claude_cli_cmd`를 우선 조회하고 오버라이드하여, 순환 참조 없이 동적 경로 오프라인 실행을 완비.
+- 로컬 Pretendard 폰트 로드: `main.py` 시작 시 Pretendard ttf 파일의 로컬 동적 등록(`QFontDatabase.addApplicationFont`)을 연동해 오프라인 룩앤필 일관성을 확보함.
+
+### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
+
+#### 🔍 이슈 1: SQLite 외래키 제약조건 정의 오류로 인한 스키마 크래시
+- **상황**: `screen_logs` 테이블 생성 시 `REFERENCES meeting_sessions.session_id` 형태로 마침표를 사용하여 외래키를 지정하자, SQLite3 엔진이 `OperationalError: near ".": syntax error` 문법 오류를 일으키며 6개 DB 단위 테스트 전체가 셋업 단계에서 폭사함.
+- **결정**: 표준적인 SQLite REFERENCES 문법 규격에 맞게 소괄호 형식인 `REFERENCES meeting_sessions(session_id)`로 신속하게 교정하여 스키마 생성을 정상화함.
+
+#### 🔍 이슈 2: Config 초기화 시 DB 매니저 참조에 따른 순환 참조(Circular Dependency) 예외
+- **상황**: `AppConfig` 로딩 시점에 DB 내 `claude_cli_cmd` 오버라이드 값을 불러오기 위해 `DatabaseManager` 모듈을 임포트 및 인스턴스화하려 하자, `DatabaseManager` 역시 `AppConfig`를 사용하므로 악명 높은 파이썬 순환 참조 런타임 예외가 발생함.
+- **결정**: `AppConfig.__post_init__`에서 상위 `db.py` 라이브러리를 임포트하지 않고, 내부에서 직접 순수 `sqlite3.connect`를 단발성 기동하여 settings 테이블의 존재 여부 및 키-값 데이터를 초경량으로 직접 조회 및 주입하도록 아키텍처를 우회 설계해 순환 참조를 타파함.

@@ -14,7 +14,7 @@ def test_init_db(db_manager):
     conn = sqlite3.connect(db_manager.db_path)
     cur = conn.cursor()
     
-    tables = ["meeting_sessions", "transcripts", "chat_logs", "settings"]
+    tables = ["meeting_sessions", "transcripts", "chat_logs", "settings", "screen_logs"]
     for table in tables:
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
         assert cur.fetchone() is not None, f"Table {table} does not exist"
@@ -111,3 +111,22 @@ def test_settings_crud(db_manager):
     # 3. 설정 업데이트 (중복 키)
     db_manager.set_setting("whisper_model_size", "medium")
     assert db_manager.get_setting("whisper_model_size") == "medium"
+
+def test_screen_logs_crud(db_manager):
+    session_id = "20260620_120000"
+    db_manager.create_session(session_id, title="테스트 미팅")
+    
+    # 1. 화면 로그 추가
+    log_id = db_manager.add_screen_log(session_id, screen_type="PPT", screen_info="sales.pptx|3")
+    assert log_id != -1
+    
+    # 2. 화면 로그 조회
+    logs = db_manager.get_screen_logs(session_id)
+    assert len(logs) == 1
+    assert logs[0]["screen_type"] == "PPT"
+    assert logs[0]["screen_info"] == "sales.pptx|3"
+    assert isinstance(logs[0]["timestamp"], float)
+    
+    # 3. 외래키 제약조건 검증
+    fail_id = db_manager.add_screen_log("non_existent_session", screen_type="GENERIC", screen_info="1,2,3")
+    assert fail_id == -1

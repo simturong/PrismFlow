@@ -65,6 +65,17 @@ class DatabaseManager:
                             value TEXT NOT NULL
                         )
                     """)
+                    # 5. 화면 캡처 로그 테이블
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS screen_logs (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL,
+                            screen_type TEXT NOT NULL,
+                            screen_info TEXT NOT NULL,
+                            timestamp REAL NOT NULL,
+                            FOREIGN KEY (session_id) REFERENCES meeting_sessions(session_id) ON DELETE CASCADE
+                        )
+                    """)
             finally:
                 conn.close()
 
@@ -232,5 +243,39 @@ class DatabaseManager:
                 if row:
                     return row['value']
                 return default
+            finally:
+                conn.close()
+
+    def add_screen_log(self, session_id: str, screen_type: str, screen_info: str) -> int:
+        """화면 맥락 감지 로그를 데이터베이스에 추가합니다."""
+        import time
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        INSERT INTO screen_logs (session_id, screen_type, screen_info, timestamp)
+                        VALUES (?, ?, ?, ?)
+                    """, (session_id, screen_type, screen_info, time.time()))
+                    return cur.lastrowid
+            except sqlite3.Error:
+                return -1
+            finally:
+                conn.close()
+
+    def get_screen_logs(self, session_id: str) -> list:
+        """특정 세션의 화면 맥락 로그를 시간순으로 조회합니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT screen_type, screen_info, timestamp 
+                    FROM screen_logs 
+                    WHERE session_id = ? 
+                    ORDER BY id ASC
+                """, (session_id,))
+                return [dict(row) for row in cur.fetchall()]
             finally:
                 conn.close()

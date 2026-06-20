@@ -149,12 +149,31 @@ class MeetingContext:
         self._signals.flow_updated.emit(code)
 
     def update_screen_info(self, screen_type: str, info: object) -> None:
+        # DB 저장용 문자열 변환
+        info_str = ""
+        if screen_type == "PPT" and isinstance(info, (tuple, list)) and len(info) >= 2:
+            info_str = f"{info[0]}|{info[1]}"
+        elif screen_type == "GENERIC":
+            import numpy as np
+            if isinstance(info, np.ndarray):
+                info_str = ",".join(map(str, info.flatten().tolist()))
+            else:
+                info_str = str(info)
+        else:
+            info_str = str(info)
+            
         with self._lock:
             self._last_screen_info = {
                 "type": screen_type,
                 "info": info,
                 "timestamp": datetime.datetime.now().isoformat()
             }
+            if self._is_meeting_active and self._current_session_id and self._db_manager:
+                self._db_manager.add_screen_log(
+                    session_id=self._current_session_id,
+                    screen_type=screen_type,
+                    screen_info=info_str
+                )
 
     def reset(self) -> None:
         """MeetingContext의 모든 내부 상태를 강제 초기화합니다."""

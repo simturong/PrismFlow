@@ -26,6 +26,24 @@ class AppConfig:
         except Exception:
             # 권한 등의 문제로 폴더 생성 실패 시 예외 처리
             pass
+            
+        # DB의 settings에서 claude_cli_cmd 값을 조회하여 오버라이드 시도
+        try:
+            db_file = Path(self.db_path)
+            if db_file.exists():
+                import sqlite3
+                conn = sqlite3.connect(str(db_file))
+                cur = conn.cursor()
+                # settings 테이블 존재 확인
+                cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'")
+                if cur.fetchone():
+                    cur.execute("SELECT value FROM settings WHERE key='claude_cli_cmd'")
+                    row = cur.fetchone()
+                    if row:
+                        self.claude_cli_cmd = row[0]
+                conn.close()
+        except Exception:
+            pass
 
     @classmethod
     def load_default(cls):

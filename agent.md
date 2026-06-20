@@ -115,6 +115,7 @@ E:\Tak\Gemini\PrismFlow\
    - 구현 계획서를 업데이트할 때 **전체 마일스톤이나 타 Phase 계획을 덮어써서 삭제하지 마십시오**.
    - 반드시 기존 계획 구조를 보존한 채로, 해당 Phase 영역에 세부 기술 설계 및 내용을 점진적으로 덧붙여야 합니다.
    - **Phase 내 계획 수정이 이루어질 경우, 이에 종속성이 있는 다른 구성요소(예: `task.md`, `tests/` 구성, 관련 API 매핑 등)도 반드시 식별하여 동시 업데이트를 보장해야 합니다.**
-
-
-
+6. **문서 동기화 및 마감 엄격 규칙 (Document Sync & Closeout Rules)**:
+   - **프로젝트 문서 및 로컬 아티팩트 동기화**: 프로젝트 내 `docs/task.md` 또는 `docs/implementation_plan.md`가 수정될 경우, 로컬 아티팩트 디렉토리 내의 `task.md` 및 `implementation_plan.md`도 반드시 **즉각 100% 동일하게 동기화**하여 생성/수정해야 합니다.
+   - **역사서 선행 마감**: 임의의 개발 Phase를 '완료(✅ 완료 또는 [x])' 처리하여 최종 보고하기 직전, 반드시 [docs/history.md](file:///E:/Tak/Gemini/PrismFlow/docs/history.md)에 해당 Phase 동안의 상세 개발 내역, 시행착오(Trial & Error), 대안 비교, 블로커 극복 과정을 **선행 작성** 완료한 뒤 완료 선언을 해야 합니다. 역사서 작성 누락은 절대 허용되지 않습니다.
+   - **계획 변경과 Task 동시 반영**: 구현 도중 설계 및 계획의 추가나 수정이 발생하면, 이에 연동되는 [docs/task.md](file:///E:/Tak/Gemini/PrismFlow/docs/task.md)(및 아티팩트 `task.md`)의 세부 할 일 목록도 즉시 구조적으로 동기화하여 변경해야 합니다.

@@ -87,3 +87,81 @@ class ClaudeCLIController:
         except Exception as e:
             logger.error(f"Failed to run Claude CLI: {str(e)}")
             raise RuntimeError(f"Failed to run Claude CLI: {str(e)}") from e
+
+    def execute_command_stream(self, prompt: str, session_id: str, model: Optional[str] = None):
+        """Claude CLI를 실행하여 스트리밍 출력을 generator로 반환합니다.
+        
+        Args:
+            prompt (str): Claude에게 전송할 프롬프트
+            session_id (str): 대화 세션을 공유하기 위한 UUID 형식의 식별자
+            model (str, optional): 사용할 Claude 모델
+            
+        Yields:
+            str: 실시간 출력 라인
+        """
+        import os
+        use_shell = os.name == 'nt'
+        
+        # 세션 존재 여부 확인을 위해 가볍게 확인
+        session_exists = False
+        check_cmd = [self.config.claude_cli_cmd, "-p", "Session check", "--resume", session_id]
+        if model:
+            check_cmd.extend(["--model", model])
+            
+        try:
+            res = subprocess.run(
+                check_cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                timeout=5,
+                shell=use_shell
+            )
+            if res.returncode == 0:
+                session_exists = True
+            elif "No conversation found" not in res.stderr:
+                session_exists = True
+        except Exception:
+            session_exists = True
+            
+        if session_exists:
+            cmd = [self.config.claude_cli_cmd, "-p", prompt, "--resume", session_id]
+        else:
+            cmd = [self.config.claude_cli_cmd, "-p", prompt, "--session-id", session_id]
+            
+        if model:
+            cmd.extend(["--model", model])
+            
+        logger.debug(f"Executing Claude CLI Stream: {' '.join(cmd)}")
+        
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                errors='ignore',
+                shell=use_shell
+            )
+            
+            for line in iter(proc.stdout.readline, ''):
+                yield line
+                
+            proc.stdout.close()
+            proc.wait()
+            
+            if proc.returncode != 0:
+                err = proc.stderr.read().strip()
+                proc.stderr.close()
+                if err:
+                    raise RuntimeError(f"Claude CLI Stream failed: {err}")
+            proc.stderr.close()
+        except Exception as e:
+            logger.error(f"Failed to run Claude CLI Stream: {str(e)}")
+            raise RuntimeError(f"Failed to run Claude CLI Stream: {str(e)}") from e
+

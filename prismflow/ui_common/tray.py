@@ -63,7 +63,9 @@ class SystemTrayManager(QSystemTrayIcon):
             self.showMessage("PrismFlow", "회의가 종료되었습니다.", QSystemTrayIcon.Information, 2000)
 
     def show_settings(self):
-        QMessageBox.information(None, "설정", "PrismFlow 설정 기능은 차후 구현될 예정입니다.")
+        from prismflow.ui_common.settings_ui import SettingsDialog
+        dialog = SettingsDialog()
+        dialog.exec()
 
     def exit_app(self):
         if self.context.is_meeting_active:
