@@ -105,7 +105,7 @@ class AppCoordinator:
         # 회의정보 스트립 초기화 (PrismFlow Assistant 창)
         self._transcript_count = 0
         self._speakers = set()
-        self.chat_ui.set_meeting_info(f"🟢 회의 중 · 세션 {session_id} · 발화 0 · 화자 0")
+        self.chat_ui.set_meeting_info("🟢 회의 중 · 발화 0 · 화자 0")
 
         # 에이전트 상태 초기화 (대시보드 뱃지)
         self.status_hub.set_status("stt", AgentState.WORKING, "기동")
@@ -170,9 +170,9 @@ class AppCoordinator:
         self._transcript_count += 1
         self._speakers.add(speaker)
         self.status_hub.set_status("stt", AgentState.OK, f"전사 {self._transcript_count}")
-        # 회의정보 스트립 실시간 갱신 (세션·발화 수·화자 수)
+        # 회의정보 라벨 실시간 갱신 (한 줄 컴팩트: 상태·발화 수·화자 수)
         self.chat_ui.set_meeting_info(
-            f"🟢 회의 중 · 세션 {self.context.current_session_id} · 발화 {self._transcript_count} · 화자 {len(self._speakers)}"
+            f"🟢 회의 중 · 발화 {self._transcript_count} · 화자 {len(self._speakers)}"
         )
 
     def _on_screen_transition(self, ttype: str, info: object):
@@ -211,9 +211,9 @@ class AppCoordinator:
         # 최종 회의록은 ReportAgent가 동일 meeting_ended 신호로 비동기 컴파일 → '생성중' 표기
         self.status_hub.set_status("report", AgentState.WORKING, "생성중")
 
-        # 회의정보 스트립을 종료 상태로 갱신
+        # 회의정보 라벨을 종료 상태로 갱신 (한 줄 컴팩트)
         self.chat_ui.set_meeting_info(
-            f"⚪ 회의 종료 · 세션 {session_id} · 발화 {self._transcript_count} · 화자 {len(self._speakers)} · 회의록 생성 중"
+            f"⚪ 종료 · 발화 {self._transcript_count} · 화자 {len(self._speakers)}"
         )
 
         # 흐름도 오버레이를 초기 안내 화면으로 리셋

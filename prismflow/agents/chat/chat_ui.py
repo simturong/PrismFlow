@@ -117,19 +117,20 @@ class ChatUI(TranslucentOverlay):
         """)
         self.mode_combo.currentTextChanged.connect(self.on_mode_changed)
 
+        # 회의정보 라벨 — 별도 줄을 쓰지 않고 타이틀 행 우측에 같은 줄로 배치(세로 줄 낭비 제거).
+        # 한 줄에 들어가도록 컴팩트 표기(상태·발화 수·화자 수). 코디네이터가 갱신.
+        self.meeting_info_label = QLabel("회의 대기 중", self)
+        self.meeting_info_label.setStyleSheet(
+            "color: #94a3b8; font-size: 11px; background: transparent;"
+            " font-family: 'Pretendard', 'Malgun Gothic', sans-serif;"
+        )
+        self.meeting_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
         title_layout.addWidget(self.title_label)
         title_layout.addWidget(self.mode_combo)
         title_layout.addStretch()
+        title_layout.addWidget(self.meeting_info_label)
         layout.addLayout(title_layout)
-
-        # 2-1. 회의정보 스트립 — 현재 세션/발화 수/녹음 상태를 한 줄로 표시 (코디네이터가 갱신)
-        self.meeting_info_label = QLabel("회의 정보: 대기 중 (회의가 시작되면 표시됩니다)", self)
-        self.meeting_info_label.setStyleSheet("""
-            color: #94a3b8; font-size: 11px; background: rgba(255,255,255,0.04);
-            border-radius: 6px; padding: 4px 8px;
-            font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
-        """)
-        layout.addWidget(self.meeting_info_label)
 
         # 3. 중앙 대화 히스토리 (QTextBrowser)
         self.chat_history = QTextBrowser(self)
