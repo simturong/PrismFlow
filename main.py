@@ -116,7 +116,7 @@ class AppCoordinator:
     def _on_transcript_updated(self, item: dict):
         speaker = item.get("speaker", "Speaker")
         text = item.get("text", "")
-        self.flow_ui.update_status_text(f"💬 {speaker}: {text}")
+        self.flow_ui.show_subtitle(speaker, text)
 
     def _on_screen_transition(self, ttype: str, info: object):
         logger.info(f"Screen transition detected: Type={ttype}, Info={info}")

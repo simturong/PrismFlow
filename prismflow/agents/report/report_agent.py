@@ -111,14 +111,27 @@ class ReportWorker(QThread):
             # 2. 모든 자료를 Mermaid 흐름도와 융합하여 보고서 프롬프트를 구성합니다.
             prompt = build_report_prompt(session, transcripts, chat_logs, self.mermaid_code)
 
-            # 3. Claude Opus 단발 호출로 최종 Markdown 회의록을 생성합니다.
-            report_content = self.cli_controller.execute_command(
-                prompt=prompt,
-                session_id=f"report-session-{self.session_id}",
-                model=REPORT_MODEL,
-                timeout=REPORT_TIMEOUT_SEC,
-                system_prompt=REPORT_SYSTEM_PROMPT,
-            )
+            # 3. Claude Opus 혹은 로컬 Fallback을 통해 최종 Markdown 회의록을 생성합니다.
+            if self.cli_controller.is_session_limited():
+                logger.warning("Claude CLI is session limited. Generating local fallback report...")
+                report_content = self._fallback_generate_report(session, transcripts, chat_logs)
+            else:
+                try:
+                    report_content = self.cli_controller.execute_command(
+                        prompt=prompt,
+                        session_id=f"report-session-{self.session_id}",
+                        model=REPORT_MODEL,
+                        timeout=REPORT_TIMEOUT_SEC,
+                        system_prompt=REPORT_SYSTEM_PROMPT,
+                    )
+                except Exception as e:
+                    err_str = str(e)
+                    if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
+                        logger.warning("Detected session limit during report generation. Falling back to local report...")
+                        self.cli_controller.set_session_limited(True)
+                        report_content = self._fallback_generate_report(session, transcripts, chat_logs)
+                    else:
+                        raise e
 
             if not report_content or not report_content.strip():
                 raise RuntimeError("보고서 생성 결과가 비어 있습니다.")
@@ -136,6 +149,48 @@ class ReportWorker(QThread):
         except Exception as e:
             logger.error(f"ReportWorker execution failed: {str(e)}")
             self.error.emit(str(e))
+
+    def _fallback_generate_report(self, session: Optional[dict], transcripts: list, chat_logs: list) -> str:
+        """클라우드 사용량 제한 시 로컬 데이터만으로 구성된 정적 마크다운 회의 요약 보고서를 작성합니다."""
+        session = session or {}
+        title = session.get("title", "새로운 회의")
+        start_time = session.get("start_time", "")
+        end_time = session.get("end_time", "")
+        
+        # 화자 목록 및 간단 통계
+        speakers = sorted(list(set([tr.get("speaker", "Unknown") for tr in transcripts])))
+        
+        # 전사록 포맷팅
+        transcript_str = _format_transcripts(transcripts)
+        
+        # 채팅 로그 포맷팅
+        chat_str = _format_chat_logs(chat_logs)
+        
+        mermaid_block = self.mermaid_code.strip() if self.mermaid_code else "(생성된 흐름도가 없습니다.)"
+        
+        return f"""# ⚠️ 회의록 (로컬 백업 대체 모드)
+
+*본 보고서는 Claude CLI 사용량 한도 초과 상태로 인해 로컬 회의 데이터(STT 및 Q&A 이력)만을 바탕으로 자동 생성된 정적 회의록입니다.*
+
+## 📅 1. 회의 기본 정보
+- **회의 제목**: {title}
+- **세션 식별자**: {self.session_id}
+- **회의 일시**: {start_time} ~ {end_time}
+- **참석 화자**: {", ".join(speakers)}
+
+## 📊 2. 회의 논리 흐름도 (Mermaid)
+```mermaid
+{mermaid_block}
+```
+
+## 👥 3. 전체 회의 대화록 (STT 전사)
+{transcript_str}
+
+## 💬 4. 회의 중 Q&A 내역 (채팅 로그)
+{chat_str}
+
+---
+*PrismFlow Local Fallback Report Engine v1.0. Claude 사용량 한도 해제 이후(기본 1:10am 이후) 재기동하시면 Opus에 의한 인공지능 요약 및 분석 회의록을 생성할 수 있습니다.*"""
 
     def _save_report(self, content: str) -> Path:
         """`docs_save_dir/YYYY-MM-DD/report_{session_id}.md` 경로에 UTF-8로 기록합니다."""
@@ -208,8 +263,12 @@ class ReportAgent(QObject):
             self.active_workers.remove(worker)
 
     def cleanup(self):
-        """기동 중인 보고서 생성 워커들을 안전하게 종료 대기합니다."""
+        """기동 중인 보고서 생성 워커들을 안전하게 종료 대기하고 시그널을 해제합니다."""
         logger.info("Cleaning up ReportAgent resources...")
+        try:
+            self.context.signals.meeting_ended.disconnect(self._on_meeting_ended)
+        except Exception:
+            pass
         for worker in list(self.active_workers):
             if worker.isRunning():
                 worker.wait(3000)

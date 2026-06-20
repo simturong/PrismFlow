@@ -115,13 +115,13 @@
 - [x] 6-3-6 정리·회귀: 설정 오버라이드/매핑 단위테스트 추가, 전체 회귀 유지, stt_live_test 정리·Pretendard 폰트 잔여 처리
 
 ## Phase 7: E2E 통합 하네스, 디버깅 및 예외 하드닝 (E2E 특집)
-- [ ] 7-1: E2E 시나리오 시뮬레이션용 하네스 스크립트 (`tests/e2e_harness.py`) 구축 및 동작 검증
-- [ ] 7-2: Claude CLI 세션 한도 초과(`session limit`) 상황 자가진단 및 UI 알림 연동
-- [ ] 7-3: Claude CLI 에러 발생 시 로컬 Fallback(대체) 모드(Flow Mermaid 룰베이스 생성, Chat 가상 응답, 정적 Markdown 회의록 작성 및 오픈) 구현
-- [ ] 7-4: WAV 원본 실시간 녹음 및 전사록 텍스트(.txt) 실시간 저장 기능 개발
-- [ ] 7-5: Flow 에이전트의 증분(Delta) 전사 업데이트 및 히스토리 DB 저장 구현
-- [ ] 7-6: 사용자 정의 오인식 교정 사전(Correction Dictionary) 및 화자 캐시 매핑 기반 로컬 자가 개선 루프 개발
-- [ ] 7-7: `FlowUI` 내 최근 전사록 실시간 프리뷰 자막바 탑재
+- [x] 7-1: E2E 시나리오 시뮬레이션용 하네스 스크립트 (`tests/e2e_harness.py`) 구축 및 동작 검증
+- [x] 7-2: Claude CLI 세션 한도 초과(`session limit`) 상황 자가진단 및 UI 알림 연동
+- [x] 7-3: Claude CLI 에러 발생 시 로컬 Fallback(대체) 모드(Flow Mermaid 룰베이스 생성, Chat 가상 응답, 정적 Markdown 회의록 작성 및 오픈) 구현
+- [x] 7-4: WAV 원본 실시간 녹음 및 전사록 텍스트(.txt) 실시간 저장 기능 개발
+- [x] 7-5: Flow 에이전트의 증분(Delta) 전사 업데이트 및 히스토리 DB 저장 구현
+- [x] 7-6: 사용자 정의 오인식 교정 사전(Correction Dictionary) 및 화자 캐시 매핑 기반 로컬 자가 개선 루프 개발
+- [x] 7-7: `FlowUI` 내 최근 전사록 실시간 프리뷰 자막바 탑재
 
 
 ## Phase 8: 오프라인 원클릭 패키징 및 배포 (순연)

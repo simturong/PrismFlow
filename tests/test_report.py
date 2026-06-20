@@ -69,6 +69,7 @@ def test_report_worker_full_pipeline(temp_config):
 
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     mock_cli.execute_command.return_value = SAMPLE_REPORT
 
     mermaid_code = "graph TD\nStart-->End"
@@ -111,6 +112,7 @@ def test_report_worker_emits_error_on_empty_response(temp_config):
 
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     mock_cli.execute_command.return_value = "   "  # 공백만 반환
 
     errors = []
@@ -138,6 +140,7 @@ def test_report_agent_triggered_by_meeting_ended(q_app, temp_config):
 
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     mock_cli.execute_command.return_value = SAMPLE_REPORT
 
     agent = ReportAgent(context=context, cli_controller=mock_cli)

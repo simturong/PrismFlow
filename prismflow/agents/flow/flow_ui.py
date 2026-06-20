@@ -3,7 +3,7 @@ import base64
 import logging
 from pathlib import Path
 from PySide6.QtWidgets import QVBoxLayout, QLabel
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, QTimer
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 from prismflow.ui_common.overlay import TranslucentOverlay
@@ -22,7 +22,7 @@ class FlowUI(TranslucentOverlay):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("PrismFlow - Meeting Map")
-        self.resize(700, 570)
+        self.resize(700, 620)
         
         # 내부 레이아웃 설정
         layout = QVBoxLayout(self)
@@ -58,15 +58,47 @@ class FlowUI(TranslucentOverlay):
         """)
         self.status_label.setText("회의를 대기 중입니다.")
         layout.addWidget(self.status_label)
+
+        # [실시간 라이브 자막바]
+        self.subtitle_bar = QLabel(self)
+        self.subtitle_bar.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.subtitle_bar.setWordWrap(True)
+        self.subtitle_bar.setStyleSheet("""
+            QLabel {
+                background-color: rgba(10, 10, 15, 230);
+                color: #00ffcc;
+                border: 1px solid rgba(0, 255, 200, 40);
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-family: 'Pretendard', 'Malgun Gothic', sans-serif;
+                font-size: 13px;
+                font-weight: bold;
+            }
+        """)
+        self.subtitle_bar.hide()
+        layout.addWidget(self.subtitle_bar)
+
+        # 자막 페이드 아웃 타이머
+        self.subtitle_timer = QTimer(self)
+        self.subtitle_timer.setSingleShot(True)
+        self.subtitle_timer.timeout.connect(self.subtitle_bar.hide)
         
     def reset_diagram(self):
         """회의 종료 시 흐름도 오버레이를 초기 안내 화면으로 되돌립니다."""
         self.web_view.setHtml(get_mermaid_html(), _RESOURCES_BASE_URL)
         self.status_label.setText("회의를 대기 중입니다.")
+        self.subtitle_bar.hide()
+        self.subtitle_timer.stop()
 
     def update_status_text(self, text: str):
         """엔진 상태 텍스트를 실시간 업데이트합니다."""
         self.status_label.setText(text)
+
+    def show_subtitle(self, speaker: str, text: str):
+        """최근 감지된 전사록 내용을 라이브 자막바로 하단에 4초간 팝업 노출합니다."""
+        self.subtitle_bar.setText(f"💬 **[{speaker}]**: {text}")
+        self.subtitle_bar.show()
+        self.subtitle_timer.start(4000)
 
     def update_diagram(self, mermaid_code: str):
         """새로운 Mermaid 코드를 수신하여 깜빡임 없이 동적으로 렌더링합니다.

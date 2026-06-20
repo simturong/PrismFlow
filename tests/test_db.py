@@ -14,7 +14,11 @@ def test_init_db(db_manager):
     conn = sqlite3.connect(db_manager.db_path)
     cur = conn.cursor()
     
-    tables = ["meeting_sessions", "transcripts", "chat_logs", "settings", "screen_logs"]
+    tables = [
+        "meeting_sessions", "transcripts", "chat_logs", 
+        "settings", "screen_logs", "flow_history", 
+        "correction_dictionary", "speaker_profiles"
+    ]
     for table in tables:
         cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,))
         assert cur.fetchone() is not None, f"Table {table} does not exist"
@@ -166,6 +170,49 @@ def test_screen_logs_crud(db_manager):
     assert logs[0]["screen_type"] == "PPT"
     assert logs[0]["screen_info"] == "sales.pptx|3"
     assert isinstance(logs[0]["timestamp"], float)
+
+def test_flow_history_crud(db_manager):
+    session_id = "20260620_120000"
+    db_manager.create_session(session_id, title="테스트 미팅")
+    
+    # 1. 흐름도 히스토리 저장
+    flow_id = db_manager.add_flow_history(session_id, "graph TD\n    A --> B")
+    assert flow_id != -1
+    
+    # 2. 흐름도 히스토리 조회
+    history = db_manager.get_flow_history(session_id)
+    assert len(history) == 1
+    assert history[0]["mermaid_code"] == "graph TD\n    A --> B"
+    assert isinstance(history[0]["timestamp"], float)
+
+def test_corrections_crud(db_manager):
+    # 1. 교정 단어 등록
+    db_manager.add_correction("프리즘프로", "프리즘플로우")
+    db_manager.add_correction("파이센", "파이썬")
+    
+    # 2. 교정 단어 조회
+    corrections = db_manager.get_corrections()
+    assert corrections["프리즘프로"] == "프리즘플로우"
+    assert corrections["파이센"] == "파이썬"
+    assert len(corrections) == 2
+    
+    # 3. 교정 단어 삭제
+    db_manager.delete_correction("파이센")
+    corrections_after = db_manager.get_corrections()
+    assert "파이센" not in corrections_after
+    assert "프리즘프로" in corrections_after
+    assert len(corrections_after) == 1
+
+def test_speaker_profiles_crud(db_manager):
+    # 1. 화자 프로필 캐시 등록
+    db_manager.add_speaker_profile("Speaker_01", "홍길동 과장")
+    db_manager.add_speaker_profile("Speaker_02", "김철수 대리")
+    
+    # 2. 화자 프로필 조회
+    profiles = db_manager.get_speaker_profiles()
+    assert profiles["Speaker_01"] == "홍길동 과장"
+    assert profiles["Speaker_02"] == "김철수 대리"
+    assert len(profiles) == 2
     
     # 3. 외래키 제약조건 검증
     fail_id = db_manager.add_screen_log("non_existent_session", screen_type="GENERIC", screen_info="1,2,3")

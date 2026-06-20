@@ -174,6 +174,20 @@ class ChatAgent(QObject):
         transcripts = self.context.transcripts
         max_idx = len(transcripts) - 1
         
+        # 1. 세션 리밋 상태이면 즉각 로컬 대체(Fallback) 모드 구동
+        if self.cli_controller.is_session_limited():
+            logger.warning("Claude CLI is session limited. Generating local fallback chat response...")
+            fallback_response = self._fallback_generate_answer(user_query)
+            if self.context.db_manager:
+                self.context.db_manager.add_chat_log(
+                    session_id=self.session_id,
+                    query=user_query,
+                    response=fallback_response,
+                    timestamp=time.time()
+                )
+            self.finished.emit(fallback_response)
+            return
+
         # 주입되지 않은 잔여 발화
         unsubmitted_list = []
         for idx in range(self.last_ingested_idx + 1, len(transcripts)):
@@ -206,10 +220,58 @@ class ChatAgent(QObject):
                 )
             self.finished.emit(final_response)
             
+        def handle_error(err_msg):
+            if "session limit" in err_msg.lower() or "limit" in err_msg.lower() or "reset" in err_msg.lower():
+                logger.warning("Detected session limit during worker execution. Falling back to local response...")
+                self.cli_controller.set_session_limited(True)
+                fallback_response = self._fallback_generate_answer(user_query)
+                if self.context.db_manager:
+                    self.context.db_manager.add_chat_log(
+                        session_id=self.session_id,
+                        query=user_query,
+                        response=fallback_response,
+                        timestamp=time.time()
+                    )
+                self.finished.emit(fallback_response)
+            else:
+                self.error_occurred.emit(err_msg)
+            
         worker.finished.connect(handle_success)
-        worker.error.connect(self.error_occurred.emit)
+        worker.error.connect(handle_error)
         worker.start()
         self.active_workers.append(worker)
+
+    def _fallback_generate_answer(self, query: str) -> str:
+        """클라우드 사용량 제한 시 로컬 전사록 기반으로 키워드 매칭 검색 및 최근 발화를 요약해 응답합니다."""
+        import re
+        transcripts = self.context.transcripts
+        if not transcripts:
+            return "⚠️ **[로컬 대체 모드]** 현재 Claude CLI 사용량 한도 초과 상태이며, 회의에 기록된 발화 데이터가 존재하지 않아 답변해 드릴 수 없습니다."
+
+        # 단순 키워드 매칭 검색
+        matched_lines = []
+        query_words = [w.strip() for w in re.split(r'\s+', query) if len(w.strip()) > 1]
+        
+        for tr in transcripts:
+            text = tr["text"]
+            for qw in query_words:
+                if qw.lower() in text.lower():
+                    matched_lines.append(f"- **[{tr['speaker']}]**: {text}")
+                    break
+        
+        response = "⚠️ **[로컬 대체 모드] 현재 Claude CLI 사용량 한도에 도달하여 가상 비서 모드로 동작 중입니다.**\n\n"
+        
+        if matched_lines:
+            response += f"질문하신 키워드 ({', '.join(query_words)})와 관련하여 감지된 회의 내용입니다:\n\n"
+            response += "\n".join(matched_lines[-7:])  # 최근 7개 매칭 라인 노출
+        else:
+            response += "회의 내용 중 질문하신 키워드와 직접 매칭되는 부분이 발견되지 않았습니다. 최근 나눈 발화록을 요약하여 전달드립니다:\n\n"
+            recent = transcripts[-5:]
+            for rt in recent:
+                response += f"- **[{rt['speaker']}]**: {rt['text']}\n"
+                
+        response += "\n\n*실제 클라우드 비서의 정밀 분석은 사용량 제한이 해제된 후(기본 1:10am 이후) 다시 이용하실 수 있습니다.*"
+        return response
 
     def cleanup(self):
         """기동 중인 타이머를 멈추고 활성화된 비동기 스레드(Worker)들을 안전하게 종료합니다."""

@@ -122,6 +122,23 @@ class MeetingContext:
         if end_time is None:
             end_time = start_time + 1.0
             
+        # 화자 이름 캐시 매핑 및 오인식 정규식 치환 적용
+        if self._db_manager:
+            try:
+                # 1. 화자 이름 치환
+                profiles = self._db_manager.get_speaker_profiles()
+                if speaker in profiles:
+                    speaker = profiles[speaker]
+                
+                # 2. 텍스트 오인식 교정 치환
+                corrections = self._db_manager.get_corrections()
+                for pattern, replacement in corrections.items():
+                    import re
+                    text = re.sub(pattern, replacement, text)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Failed to apply corrections or profiles in add_transcript: {e}")
+
         item = {
             "speaker": speaker, 
             "text": text, 
@@ -139,12 +156,36 @@ class MeetingContext:
                     start_time=start_time,
                     end_time=end_time
                 )
+                
+                # 실시간 정적 전사록 파일 (.txt) 추가 기록
+                try:
+                    from pathlib import Path
+                    today = datetime.date.today().strftime("%Y-%m-%d")
+                    transcripts_dir = Path(self._config.docs_save_dir).parent / "Transcripts" / today
+                    transcripts_dir.mkdir(parents=True, exist_ok=True)
+                    txt_filepath = transcripts_dir / f"transcript_{self._current_session_id}.txt"
+                    
+                    # HH:MM:SS 포맷 타임코드 계산
+                    seconds = int(start_time)
+                    h = seconds // 3600
+                    m = (seconds % 3600) // 60
+                    s = seconds % 60
+                    time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                    
+                    with open(txt_filepath, "a", encoding="utf-8") as f:
+                        f.write(f"[{time_str}] [{speaker}]: {text}\n")
+                except Exception as e:
+                    # 파일 쓰기 예외가 전체 전사 흐름을 방해하지 않도록 격리
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed to write real-time transcript to txt file: {e}")
         
         self._signals.transcript_updated.emit(item)
 
     def update_mermaid_code(self, code: str) -> None:
         with self._lock:
             self._current_mermaid_code = code
+            if self._db_manager and self._is_meeting_active and self._current_session_id:
+                self._db_manager.add_flow_history(self._current_session_id, code)
         
         self._signals.flow_updated.emit(code)
 

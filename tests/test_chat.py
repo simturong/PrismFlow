@@ -48,6 +48,7 @@ def test_chat_agent_background_ingestion(temp_config):
     
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     
     # 50ms 마다 자동 주입 타이머 실행하도록 설정
     agent = ChatAgent(context=context, cli_controller=mock_cli, ingest_interval_ms=50)
@@ -83,6 +84,7 @@ def test_chat_agent_qna_and_unsubmitted_merge(temp_config):
     
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     
     def fake_stream(prompt, session_id, model, system_prompt=None):
         yield "이것은 "
@@ -141,6 +143,7 @@ def test_chat_ui_integration(q_app, temp_config):
     
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     
     def fake_stream(prompt, session_id, model, system_prompt=None):
         yield "안녕"
@@ -185,6 +188,7 @@ def test_chat_agent_cleanup(temp_config):
     
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     
     # agent 생성 시 최초 세션 연결을 위해 IngestWorker가 하나 기동됨
     agent = ChatAgent(context=context, cli_controller=mock_cli, ingest_interval_ms=50000)
@@ -211,6 +215,7 @@ def test_chat_ui_initial_lock_and_unlock(q_app, temp_config):
     
     mock_cli = MagicMock(spec=ClaudeCLIController)
     mock_cli.config = temp_config
+    mock_cli.is_session_limited.return_value = False
     
     agent = ChatAgent(context=context, cli_controller=mock_cli, ingest_interval_ms=50000)
     ui = ChatUI(agent=agent)

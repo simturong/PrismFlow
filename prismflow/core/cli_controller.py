@@ -34,6 +34,7 @@ class ClaudeCLIController:
         # shell=False로 실행하기 위해 실제 실행 파일 경로(Windows의 claude.CMD 등)를 해석한다.
         # 해석 실패 시 원본 명령을 그대로 사용(존재하지 않으면 subprocess가 예외 → RuntimeError로 변환).
         self._cli_exe = shutil.which(self.config.claude_cli_cmd) or self.config.claude_cli_cmd
+        self._session_limited = False
 
     def _build_extra_args(self, model: Optional[str], system_prompt: Optional[str]) -> List[str]:
         """클린·경량 격리 실행을 위한 공통 인자(+모델/시스템 프롬프트)를 조립합니다."""
@@ -111,6 +112,8 @@ class ClaudeCLIController:
             if result.returncode != 0:
                 err_msg = result.stderr.strip()
                 logger.error(f"Claude CLI execution failed (Code {result.returncode}): {err_msg}")
+                if "session limit" in err_msg.lower() or "limit" in err_msg.lower() or "reset" in err_msg.lower():
+                    self._session_limited = True
                 raise RuntimeError(f"Claude CLI execution failed: {err_msg}")
                 
             return result.stdout.strip()
@@ -119,8 +122,11 @@ class ClaudeCLIController:
             logger.error(f"Claude CLI execution timed out after {timeout} seconds.")
             raise TimeoutError(f"Claude CLI execution timed out after {timeout} seconds.") from e
         except Exception as e:
-            logger.error(f"Failed to run Claude CLI: {str(e)}")
-            raise RuntimeError(f"Failed to run Claude CLI: {str(e)}") from e
+            err_str = str(e)
+            if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
+                self._session_limited = True
+            logger.error(f"Failed to run Claude CLI: {err_str}")
+            raise RuntimeError(f"Failed to run Claude CLI: {err_str}") from e
 
     def execute_command_stream(self, prompt: str, session_id: str, model: Optional[str] = None,
                                system_prompt: Optional[str] = None):
@@ -188,9 +194,22 @@ class ClaudeCLIController:
                 err = proc.stderr.read().strip()
                 proc.stderr.close()
                 if err:
+                    if "session limit" in err.lower() or "limit" in err.lower() or "reset" in err.lower():
+                        self._session_limited = True
                     raise RuntimeError(f"Claude CLI Stream failed: {err}")
             proc.stderr.close()
         except Exception as e:
-            logger.error(f"Failed to run Claude CLI Stream: {str(e)}")
-            raise RuntimeError(f"Failed to run Claude CLI Stream: {str(e)}") from e
+            err_str = str(e)
+            if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
+                self._session_limited = True
+            logger.error(f"Failed to run Claude CLI Stream: {err_str}")
+            raise RuntimeError(f"Failed to run Claude CLI Stream: {err_str}") from e
+
+    def is_session_limited(self) -> bool:
+        """현재 Claude CLI가 사용량 한도 초과 상태인지 여부를 반환합니다."""
+        return self._session_limited
+
+    def set_session_limited(self, val: bool):
+        """Claude CLI의 사용량 한도 초과 상태를 직접 설정합니다."""
+        self._session_limited = val
 

@@ -199,3 +199,39 @@ def test_config_db_override_accel_invalid(tmp_path):
     config = AppConfig(db_path=str(db_file))
     assert config.stt_device == "AUTO"
 
+
+def test_context_auto_correction_and_speaker_profile(q_app, tmp_path):
+    """MeetingContext가 DB의 오인식 교정 사전 및 화자 프로필 캐시를 활용해 발화를 실시간 변환하는지 검증"""
+    db_file = tmp_path / "test_correction.db"
+    db_manager = DatabaseManager(str(db_file))
+    
+    # 1. DB에 교정 단어 및 화자 프로필 추가
+    db_manager.add_correction("프리즘프로", "프리즘플로우")
+    db_manager.add_correction("안녕하새요", "안녕하세요")
+    db_manager.add_speaker_profile("Speaker_00", "홍길동 과장")
+    
+    context = MeetingContext()
+    context.db_manager = db_manager
+    context.reset()
+    
+    context.start_meeting("session_correction_test")
+    
+    # 2. 발화 추가 (변환 대상)
+    context.add_transcript(speaker="Speaker_00", text="프리즘프로 안녕하새요. 회의를 시작합시다.", start_time=1.0, end_time=3.0)
+    
+    # 3. 결과 확인
+    transcripts = context.transcripts
+    assert len(transcripts) == 1
+    assert transcripts[0]["speaker"] == "홍길동 과장"
+    assert transcripts[0]["text"] == "프리즘플로우 안녕하세요. 회의를 시작합시다."
+    
+    # DB 확인
+    db_transcripts = db_manager.get_transcripts("session_correction_test")
+    assert len(db_transcripts) == 1
+    assert db_transcripts[0]["speaker"] == "홍길동 과장"
+    assert db_transcripts[0]["text"] == "프리즘플로우 안녕하세요. 회의를 시작합시다."
+    
+    context.end_meeting()
+    context.reset()
+
+

@@ -76,6 +76,30 @@ class DatabaseManager:
                             FOREIGN KEY (session_id) REFERENCES meeting_sessions(session_id) ON DELETE CASCADE
                         )
                     """)
+                    # 5-2. Mermaid 흐름도 히스토리 테이블
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS flow_history (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            session_id TEXT NOT NULL,
+                            mermaid_code TEXT NOT NULL,
+                            timestamp REAL NOT NULL,
+                            FOREIGN KEY (session_id) REFERENCES meeting_sessions(session_id) ON DELETE CASCADE
+                        )
+                    """)
+                    # 5-3. 오인식 교정 사전 테이블
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS correction_dictionary (
+                            pattern TEXT PRIMARY KEY,
+                            replacement TEXT NOT NULL
+                        )
+                    """)
+                    # 5-4. 화자 실제 이름 매핑 캐시 테이블
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS speaker_profiles (
+                            speaker_id TEXT PRIMARY KEY,
+                            actual_name TEXT NOT NULL
+                        )
+                    """)
 
                     # 6. 레거시 스키마 마이그레이션
                     #    CREATE TABLE IF NOT EXISTS는 기존 테이블의 컬럼을 갱신하지 못하므로,
@@ -313,5 +337,97 @@ class DatabaseManager:
                     ORDER BY id ASC
                 """, (session_id,))
                 return [dict(row) for row in cur.fetchall()]
+            finally:
+                conn.close()
+
+    def add_flow_history(self, session_id: str, mermaid_code: str) -> int:
+        """새로운 Mermaid 흐름도 스냅샷을 DB에 영구 기록합니다."""
+        import time
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        INSERT INTO flow_history (session_id, mermaid_code, timestamp)
+                        VALUES (?, ?, ?)
+                    """, (session_id, mermaid_code, time.time()))
+                    return cur.lastrowid
+            except sqlite3.Error:
+                return -1
+            finally:
+                conn.close()
+
+    def get_flow_history(self, session_id: str) -> list:
+        """특정 세션의 Mermaid 흐름도 히스토리 스냅샷들을 시간순으로 조회합니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT mermaid_code, timestamp 
+                    FROM flow_history 
+                    WHERE session_id = ? 
+                    ORDER BY id ASC
+                """, (session_id,))
+                return [dict(row) for row in cur.fetchall()]
+            finally:
+                conn.close()
+
+    def add_correction(self, pattern: str, replacement: str) -> None:
+        """오인식 교정 사전에 치환 패턴을 등록합니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO correction_dictionary (pattern, replacement)
+                        VALUES (?, ?)
+                    """, (pattern, replacement))
+            finally:
+                conn.close()
+
+    def get_corrections(self) -> dict:
+        """등록된 모든 오인식 교정 패턴 매핑을 사전 형태로 가져옵니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT pattern, replacement FROM correction_dictionary")
+                return {row["pattern"]: row["replacement"] for row in cur.fetchall()}
+            finally:
+                conn.close()
+
+    def delete_correction(self, pattern: str) -> None:
+        """교정 사전에서 특정 패턴을 삭제합니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    conn.execute("DELETE FROM correction_dictionary WHERE pattern = ?", (pattern,))
+            finally:
+                conn.close()
+
+    def add_speaker_profile(self, speaker_id: str, actual_name: str) -> None:
+        """화자 프로필(ID ↔ 실제 이름) 매핑 정보를 등록합니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    conn.execute("""
+                        INSERT OR REPLACE INTO speaker_profiles (speaker_id, actual_name)
+                        VALUES (?, ?)
+                    """, (speaker_id, actual_name))
+            finally:
+                conn.close()
+
+    def get_speaker_profiles(self) -> dict:
+        """등록된 모든 화자 프로필 매핑 정보를 사전 형태로 가져옵니다."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT speaker_id, actual_name FROM speaker_profiles")
+                return {row["speaker_id"]: row["actual_name"] for row in cur.fetchall()}
             finally:
                 conn.close()

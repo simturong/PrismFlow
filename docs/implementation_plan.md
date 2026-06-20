@@ -698,10 +698,33 @@ endlocal
 
 #### 7-1. E2E 통합 테스트 하네스 (`tests/e2e_harness.py`) 구축
 *   **목적**: 음성을 직접 내지 않고도 전체 라이프사이클을 반복 및 자동 시뮬레이션하며, 세션 한도 초과 등 다양한 예외 상황에서의 E2E 흐름을 검출하고 회귀를 방지하기 위함.
-*   **설계 상세**:
-    *   `E2EHarness` 클래스를 통해 가상의 오디오 프레임을 공급(또는 VAD 감지 모크)하여 STT 엔진이 전사 결과(`transcripts`)를 DB에 주기적으로 적재하도록 유도.
-    *   Claude CLI 세션 한도 초과(`Exit Code 1: You've hit your session limit`), API 키 미설정, 네트워크 끊김 등의 장애 조건을 주입할 수 있는 스텁 환경 구성.
-    *   회의 시작 ➔ 실시간 STT ➔ Flow 다이어그램 갱신 ➔ Chat Q&A ➔ 회의 종료 ➔ 보고서 생성 및 실행에 이르는 전 프로세스를 10초 이내의 빠른 주기로 구동 및 검증하는 하네스 루프 스크립트.
+*   **구현 아키텍처 및 상세 설계**:
+    *   **클래스 설계**: `E2EHarness` 클래스 제공.
+        *   `__init__(self, config: AppConfig)`: 테스트용 DB 및 설정을 인자로 받아 초기화.
+        *   `run_simulation(self, session_limit: bool = False) -> dict`: 10초 E2E 흐름 시뮬레이션을 수행하고, 수집된 결과(전사 개수, 생성된 Mermaid 코드, 채팅 응답, 생성된 보고서 경로 등)를 딕셔너리로 반환.
+    *   **가상 오디오 공급 및 STT 가속화 (Mock STT)**:
+        *   `stt_worker`를 Mocking하여 실제 마이크 대신 1~2초 간격으로 `MeetingContext`에 가상 발화(예: "안녕하세요", "회의를 시작하겠습니다", "Mermaid 다이어그램을 업데이트합니다")를 `add_transcript`를 통해 적재.
+        *   실제 `RealTimeEngineWorker` 기동을 차단하거나 빠른 가상 이벤트 기동으로 교체하여 지연 없는 테스트 수행.
+    *   **장애 조건 주입 (Claude CLI Session Limit)**:
+        *   `ClaudeCLIController`의 `execute_command`와 `execute_command_stream` 메소드를 몽키패칭(Monkeypatch)하여 장애 상태 시뮬레이션.
+        *   `session_limit=True` 주입 시, `Exit Code 1` 에러와 함께 `RuntimeError("Claude CLI execution failed: You've hit your session limit. Please try again after 1:10am.")`를 발생시킴.
+        *   네트워크 끊김 상태나 API 키 미설정 상태도 옵션으로 주입할 수 있도록 설계.
+    *   **E2E 흐름 10초 가속 루프**:
+        1. **회의 기동**: `MeetingContext.start_meeting()` 및 `AppCoordinator` 인스턴스화.
+        2. **STT 데이터 적재**: 1.5초 간격으로 3회 이상의 가상 발화 주입.
+        3. **Flow Agent 갱신 주기 단축**: Flow Agent의 갱신 주기(`check_interval_sec`)를 2.0초로 단축 설정하여 시뮬레이션 중 1회 이상 Flow 생성 루프가 돌도록 유도.
+        4. **Chat Q&A**: 5초 시점에 `chat_agent.send_query("핵심 주제 요약")`을 호출.
+        5. **회의 종료**: 8초 시점에 `MeetingContext.end_meeting()`을 호출하여 회의 종료 시그널 방출 및 `ReportAgent` 구동 유도.
+        6. **QApplication 이벤트 루프 가속**: `QApplication.processEvents()`와 `QTest.qWait()` 또는 PySide6 타이머 루프를 통해 UI 블로킹 없이 10초간의 백그라운드 스레드 및 시그널-슬롯 처리를 완벽하게 구동.
+    *   **결과 및 자원 검증 (Assert Points)**:
+        *   정상 동작 조건:
+            *   DB `transcripts` 테이블에 발화가 정상 기록되었는가?
+            *   `FlowUI` 및 `MeetingContext`에 Mermaid 다이어그램 코드가 정상 갱신되었는가?
+            *   Chat Q&A 응답이 수신되었는가?
+            *   회의 종료 후 `%USERPROFILE%/Documents/PrismFlow/Reports/...` 하위에 보고서 파일이 정상 생성 및 저장되었고 DB `summary`에 기록되었는가?
+        *   장애 주입 동작 조건:
+            *   `session limit` 발생 시 앱이 비정상 종료(Crash)되지 않는가?
+            *   (7-2, 7-3 구현 후 연동) Fallback 모드로 전환되어, 로컬 룰베이스 Mermaid가 생성되었고 정적 Markdown 보고서가 안전하게 컴파일 및 저장되었는가?
 
 #### 7-2. Claude CLI 에러 하드닝 및 로컬 Fallback(대체) 모드 구현
 *   **배경**: Claude CLI가 세션 한도 초과나 네트워크 단절로 에러(Exit Code 1)를 낼 때, 앱이 크래시되거나 비정상 종료되는 현상을 막고, 제한 상황 하에서도 정상적으로 회의록을 생성 및 저장할 수 있는 안전장치 마련.

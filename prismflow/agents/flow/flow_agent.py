@@ -31,6 +31,7 @@ class FlowAgent(QThread):
         
         # Flow Agent 전용 고유 세션 ID (매 회의마다 새로 생성)
         self.flow_session_id: Optional[str] = None
+        self.last_analyzed_idx = -1
         
     def run(self):
         self.running = True
@@ -39,8 +40,8 @@ class FlowAgent(QThread):
         # 회의 세션 기반으로 Flow 전용 CLI 세션 UUID 정의
         self.flow_session_id = f"flow-session-{self.context.current_session_id}"
         
-        # 마지막 분석 시점의 발화 개수 기록 (발화 추가 시에만 API 호출 유도)
-        last_analyzed_count = 0
+        # 마지막 분석 시점의 발화 인덱스 기록 (회의 시작 시 리셋)
+        self.last_analyzed_idx = -1
         
         # 30초 대기를 정밀하게 처리하기 위한 누적 카운터 (100ms 단위)
         wait_counter = 0
@@ -56,15 +57,14 @@ class FlowAgent(QThread):
                     current_count = len(transcripts)
                     
                     # 새로운 발화가 추가되었거나 아직 다이어그램이 없는 경우에만 실행
-                    if current_count > 0 and (current_count != last_analyzed_count or not self.context.current_mermaid_code):
+                    if current_count > 0 and (self.last_analyzed_idx < current_count - 1 or not self.context.current_mermaid_code):
                         self._analyze_and_update(transcripts)
-                        last_analyzed_count = current_count
                 else:
                     wait_counter += 1
             else:
                 # 회의 미작동 시 분석 대기 리셋
                 wait_counter = 0
-                last_analyzed_count = 0
+                self.last_analyzed_idx = -1
                 
             self.msleep(100)  # 100ms 대기 (빠른 스레드 종료 대응)
             
@@ -77,14 +77,16 @@ class FlowAgent(QThread):
 
     def _analyze_and_update(self, transcripts: list):
         """최근 발화 내용 및 화면 맥락을 수집하여 Claude CLI로 Mermaid 코드를 갱신합니다."""
-        # 1. 최근 10분 이내 혹은 누적 발화 문자열 생성
-        transcript_lines = []
+        # 1. 신규 발화 내역 추출 (증분 업데이트)
+        new_lines = []
         has_visual_indicator = False
         visual_keywords = ["여기 보시면", "이 슬라이드", "이 도표", "이 그림", "이 화면", "여기를 보면"]
         
-        for item in transcripts:
+        start_idx = self.last_analyzed_idx + 1
+        for idx in range(start_idx, len(transcripts)):
+            item = transcripts[idx]
             line = f"[{item['speaker']}] {item['text']}"
-            transcript_lines.append(line)
+            new_lines.append(line)
             
             # 발화 텍스트 중 시각 지시어 포함 여부 검사
             if not has_visual_indicator:
@@ -93,7 +95,13 @@ class FlowAgent(QThread):
                         has_visual_indicator = True
                         break
                         
-        transcript_text = "\n".join(transcript_lines)
+        new_transcripts_text = "\n".join(new_lines)
+        max_idx = len(transcripts) - 1
+        
+        # 만약 신규 발화가 없는데 다이어그램이 비어 있는 특수 상황이면 전체를 다 사용
+        if not new_transcripts_text and not self.context.current_mermaid_code:
+            new_lines = [f"[{item['speaker']}] {item['text']}" for item in transcripts]
+            new_transcripts_text = "\n".join(new_lines)
         
         # 2. 스마트 화면 맥락 결합 (시각 지시어가 감지되었고 최근 화면 정보가 있을 때)
         screen_context_prompt = ""
@@ -110,10 +118,10 @@ class FlowAgent(QThread):
         prev_mermaid = self.context.current_mermaid_code or "없음 (최초 작성)"
         
         prompt = f"""당신은 오프라인 회의 흐름도 시각화를 돕는 Flow Agent입니다.
-아래의 [회의 발화 내역]과 [기존 Mermaid 코드]를 참고하여, 회의의 핵심 흐름과 논의 사항을 반영하는 Mermaid flowchart TD 코드를 작성해 주세요.
+아래의 [신규 추가된 회의 발화 내역]과 [기존 Mermaid 코드]를 참고하여, 회의의 핵심 흐름과 신규 논의 사항을 누적 반영하는 Mermaid flowchart TD 코드를 작성해 주세요.
 
-[회의 발화 내역]
-{transcript_text}
+[신규 추가된 회의 발화 내역]
+{new_transcripts_text}
 {screen_context_prompt}
 
 [기존 Mermaid 코드]
@@ -126,6 +134,14 @@ class FlowAgent(QThread):
 4. 단순 인사말, 잡담, 중복 추임새는 노드에 추가하지 말고 노이즈로 필터링하세요.
 5. 화자 정보(예: Speaker_00)를 노드 텍스트에 간략히 표기해 주세요 (예: "아이디어 제안 (Speaker_00)").
 """
+        # 4. 세션 리밋 상태이면 즉각 로컬 대체(Fallback) 모드 구동
+        if self.cli_controller.is_session_limited():
+            logger.warning("Claude CLI is session limited. Generating local fallback Mermaid diagram...")
+            fallback_code = self._fallback_generate_mermaid(transcripts)
+            self.context.update_mermaid_code(fallback_code)
+            self.diagram_updated.emit(fallback_code)
+            return
+
         try:
             logger.info("Requesting Mermaid diagram update from Claude CLI...")
             # Haiku 모델을 명시하여 호출
@@ -136,16 +152,48 @@ class FlowAgent(QThread):
                 system_prompt=FLOW_SYSTEM_PROMPT
             )
             
-            # 4. 결과 파싱 및 검증
+            # 5. 결과 파싱 및 검증
             parsed_code = self._clean_mermaid_code(response)
             if parsed_code and ("graph " in parsed_code or "flowchart " in parsed_code):
                 logger.info("Successfully updated Mermaid diagram code.")
                 self.context.update_mermaid_code(parsed_code)
                 self.diagram_updated.emit(parsed_code)
+                self.last_analyzed_idx = max_idx
             else:
                 logger.warning(f"Claude returned invalid Mermaid code format: {response[:100]}...")
         except Exception as e:
             logger.error(f"Error during FlowAgent analysis loop: {str(e)}")
+            # 장애 발생 시 로컬 룰베이스 폴백 연동
+            logger.info("Falling back to local rule-based Mermaid generator...")
+            fallback_code = self._fallback_generate_mermaid(transcripts)
+            self.context.update_mermaid_code(fallback_code)
+            self.diagram_updated.emit(fallback_code)
+            self.last_analyzed_idx = max_idx
+
+    def _fallback_generate_mermaid(self, transcripts: list) -> str:
+        """클라우드 한도 초과 시 로컬 발화 관계 및 타임라인을 나타내는 룰베이스 Mermaid flowchart TD를 생성합니다."""
+        code = "graph TD\n"
+        code += "    subgraph LocalFallback[⚠️ 로컬 대체 모드 - CLI 사용량 한도 초과]\n"
+        
+        # 화자 목록 수집
+        speakers = sorted(list(set([item["speaker"] for item in transcripts])))
+        for sp in speakers:
+            code += f"        {sp}[\"{sp} (발화군)\"]\n"
+            
+        # 최근 12개 발화의 화자 간 전이관계 연결 (간단한 요약 텍스트 포함)
+        recent = transcripts[-12:]
+        for i in range(len(recent) - 1):
+            s1 = recent[i]["speaker"]
+            s2 = recent[i+1]["speaker"]
+            if s1 != s2:
+                txt = recent[i+1]["text"].strip()
+                # 불필요 특수문자 제거 및 15글자 축소
+                txt_clean = re.sub(r'["\'\(\)\{\}\[\]]', '', txt)
+                txt_trunc = txt_clean[:15] + "..." if len(txt_clean) > 15 else txt_clean
+                code += f"        {s1} -->|\"{txt_trunc}\"| {s2}\n"
+                
+        code += "    end"
+        return code
 
     def _clean_mermaid_code(self, raw_response: str) -> str:
         """반환된 텍스트에서 불필요한 마크다운 코드 블록 및 주석을 정제하여 순수 Mermaid 코드만 추출합니다."""

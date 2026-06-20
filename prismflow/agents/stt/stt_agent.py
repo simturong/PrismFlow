@@ -31,6 +31,7 @@ class RealTimeEngineWorker(QThread):
         
         # Mock 전용 주기 설정 (테스트 시 짧게 조정 가능하도록 config 확인 및 기본 15.0초 지정)
         self.mock_interval = getattr(self.config, "stt_mock_interval", 15.0)
+        self._wav_file = None
 
     def stop(self):
         """스레드를 안전하게 종료합니다."""
@@ -48,9 +49,14 @@ class RealTimeEngineWorker(QThread):
 
     def _run_mock_loop(self):
         dialogue_idx = 0
+        wav_initialized = False
         
         while self._running:
             if self.context.is_meeting_active:
+                if not wav_initialized:
+                    self._init_wav_file(self.context.current_session_id)
+                    wav_initialized = True
+                    
                 if dialogue_idx < len(MOCK_DIALOGUES):
                     speaker, text, start_time, end_time = MOCK_DIALOGUES[dialogue_idx]
                     
@@ -60,6 +66,8 @@ class RealTimeEngineWorker(QThread):
                         start_time=start_time,
                         end_time=end_time
                     )
+                    # 모크 쓰기: 파일 생성 보증을 위한 1초 분량 가짜 무음 기록
+                    self._write_audio_to_wav(np.zeros(16000))
                     dialogue_idx += 1
                 else:
                     # 루프 회독이 끝났으나 회의가 계속 진행 중일 때 대기
@@ -73,9 +81,14 @@ class RealTimeEngineWorker(QThread):
                     time.sleep(0.1)
             else:
                 # 회의가 종료되었거나 활성화 전이면 대기
+                if wav_initialized:
+                    self._close_wav_file()
+                    wav_initialized = False
                 dialogue_idx = 0
                 time.sleep(0.1)
                 
+        if wav_initialized:
+            self._close_wav_file()
         self.status_changed.emit("idle")
 
     def _run_real_loop(self):
@@ -109,11 +122,15 @@ class RealTimeEngineWorker(QThread):
 
         # 준비 완료
         self.status_changed.emit("running")
+        
+        # 실시간 녹음 파일 생성
+        self._init_wav_file(self.context.current_session_id)
 
         try:
             self._run_vad_segmented_loop(audio_cap)
         finally:
             audio_cap.stop()
+            self._close_wav_file()
             self.status_changed.emit("idle")
 
     def _run_vad_segmented_loop(self, audio_cap):
@@ -172,6 +189,9 @@ class RealTimeEngineWorker(QThread):
             if chunk is None:
                 time.sleep(0.01)
                 continue
+
+            # 실시간 오디오 파일에 프레임 기록
+            self._write_audio_to_wav(chunk)
 
             abs_samples += len(chunk)
             rms = float(np.sqrt(np.mean(chunk ** 2))) if len(chunk) else 0.0
@@ -427,3 +447,44 @@ class RealTimeEngineWorker(QThread):
         except Exception as e:
             logger.warning(f"Global speaker matching error, fallback to local speaker: {e}")
             return local_speaker
+
+    def _init_wav_file(self, session_id: str):
+        """회의 세션 시작 시 실시간 녹음용 WAV 파일을 열고 초기 헤더를 생성합니다."""
+        import datetime
+        import wave
+        from pathlib import Path
+        try:
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            recordings_dir = Path(self.config.docs_save_dir).parent / "Recordings" / today
+            recordings_dir.mkdir(parents=True, exist_ok=True)
+            wav_filepath = recordings_dir / f"meeting_{session_id}.wav"
+            
+            self._wav_file = wave.open(str(wav_filepath), 'wb')
+            self._wav_file.setnchannels(1)
+            self._wav_file.setsampwidth(2) # 16-bit
+            self._wav_file.setframerate(self.config.audio_sample_rate)
+            logger.info(f"Initialized real-time audio WAV recording: {wav_filepath}")
+        except Exception as e:
+            logger.error(f"Failed to initialize audio WAV file: {e}")
+            self._wav_file = None
+
+    def _write_audio_to_wav(self, chunk):
+        """Float32 오디오 numpy 배열을 Int16으로 변환하여 WAV에 실시간 기록합니다."""
+        if self._wav_file and chunk is not None and len(chunk) > 0:
+            try:
+                # Float32 (-1.0 ~ 1.0) -> Int16 (-32768 ~ 32767)
+                int_data = (chunk * 32767.0).astype(np.int16)
+                self._wav_file.writeframes(int_data.tobytes())
+            except Exception as e:
+                logger.error(f"Failed to write audio frame to WAV file: {e}")
+
+    def _close_wav_file(self):
+        """기동 중인 WAV 파일을 안전하게 닫아 플러시를 마칩니다."""
+        if self._wav_file:
+            try:
+                self._wav_file.close()
+                logger.info("Closed real-time audio WAV recording file.")
+            except Exception as e:
+                logger.error(f"Failed to close WAV file: {e}")
+            finally:
+                self._wav_file = None

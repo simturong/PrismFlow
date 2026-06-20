@@ -120,6 +120,7 @@ def test_flow_agent_prompt_integration():
     
     # 3. CLI 컨트롤러 모킹
     mock_cli = MagicMock()
+    mock_cli.is_session_limited.return_value = False
     
     agent = FlowAgent(context, mock_cli, check_interval_sec=0.1)
     
