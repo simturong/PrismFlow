@@ -1,5 +1,6 @@
 import threading
 import datetime
+from typing import Optional
 from PySide6.QtCore import QObject, Signal
 from prismflow.core.config import AppConfig
 from prismflow.core.db import DatabaseManager
@@ -33,6 +34,7 @@ class MeetingContext:
         self._current_session_id = None
         self._transcripts = []
         self._current_mermaid_code = ""
+        self._last_screen_info = None
         
         # DB 매니저 기본 초기화
         self._config = AppConfig.load_default()
@@ -63,6 +65,11 @@ class MeetingContext:
     def current_mermaid_code(self) -> str:
         with self._lock:
             return self._current_mermaid_code
+
+    @property
+    def last_screen_info(self) -> Optional[dict]:
+        with self._lock:
+            return self._last_screen_info
 
     @property
     def db_manager(self) -> DatabaseManager:
@@ -141,6 +148,14 @@ class MeetingContext:
         
         self._signals.flow_updated.emit(code)
 
+    def update_screen_info(self, screen_type: str, info: object) -> None:
+        with self._lock:
+            self._last_screen_info = {
+                "type": screen_type,
+                "info": info,
+                "timestamp": datetime.datetime.now().isoformat()
+            }
+
     def reset(self) -> None:
         """MeetingContext의 모든 내부 상태를 강제 초기화합니다."""
         with self._lock:
@@ -148,3 +163,4 @@ class MeetingContext:
             self._current_session_id = None
             self._transcripts.clear()
             self._current_mermaid_code = ""
+            self._last_screen_info = None

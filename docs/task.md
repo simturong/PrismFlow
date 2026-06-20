@@ -15,11 +15,12 @@
 - [x] `tests/test_stt.py` STT 스레드 및 데이터 파이프라인 검증 테스트 통과
 
 ## Phase 3: Claude CLI 통신 및 Flow Agent Mermaid 시각화
-- [ ] `prismflow/core/cli_controller.py` 로컬 Claude CLI 파이프 비차단 IO 제어 모듈 개발
-- [ ] `tests/test_cli.py` 로컬 Claude CLI 통신 테스트 작성 및 검증
-- [ ] 리소스 폴더 구성 및 오프라인용 `mermaid.min.js` 다운로드/배치
-- [ ] `prismflow/agents/flow/flow_ui.py` 내 `QWebEngineView` 통합 및 Mermaid 렌더링 검증
-- [ ] `prismflow/agents/flow/flow_agent.py`를 통한 30초 주기 Mermaid 다이어그램 갱신 루프 테스트 및 `tests/test_flow.py` 검증
+- [x] `prismflow/core/cli_controller.py` 로컬 Claude CLI 파이프 비차단 IO 제어 모듈 개발
+- [x] `prismflow/core/screen_detector.py` 스마트 화면 맥락 감지 모듈 개발 (win32com + Pillow)
+- [x] `tests/test_cli.py` 로컬 Claude CLI 통신 테스트 작성 및 검증
+- [x] 리소스 폴더 구성 및 오프라인용 `mermaid.min.js` 다운로드/배치
+- [x] `prismflow/agents/flow/flow_ui.py` 내 `QWebEngineView` 통합 및 Mermaid 렌더링 검증
+- [x] `prismflow/agents/flow/flow_agent.py`를 통한 30초 주기 Mermaid 다이어그램 갱신 루프 테스트 및 `tests/test_flow.py` 검증
 
 ## Phase 4: Chat Agent 하이브리드 RAG 및 대화창 통합
 - [ ] `prismflow/agents/chat/chat_ui.py` 채팅 입출력 팝업 GUI 및 스크롤바/스타일링 개발

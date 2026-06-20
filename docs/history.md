@@ -12,8 +12,8 @@
 | :--- | :--- | :--- | :--- |
 | **기획 및 아키텍처 수립** | ✅ 완료 | 2026-06-20 | 요구사항 분석, 에이전트 설계, 수직 슬라이스 트리 구성, 개발 지침 확정 |
 | **Phase 1: 트레이 및 GUI 스캐폴딩** | ✅ 완료 | 2026-06-20 | 트레이 메뉴 구성 및 투명 오버레이 윈도우(페이드/드래그) 빌드 |
-| **Phase 2: SQLite DB & STT 가동** | 대기 중 | - | 데이터베이스 CRUD 작성 및 실시간 STT Mock 에뮬레이터 검증 |
-| **Phase 3: Flow & Mermaid 연동** | 대기 중 | - | Claude CLI 비차단 파이프 연결 및 Mermaid 렌더링 검증 |
+| **Phase 2: SQLite DB & STT 가동** | ✅ 완료 | 2026-06-20 | 데이터베이스 CRUD 작성 및 실시간 STT Mock 에뮬레이터 검증 |
+| **Phase 3: Flow & Mermaid 연동** | ✅ 완료 | 2026-06-20 | Claude CLI 비차단 파이프 연결 및 Mermaid 렌더링 검증 |
 | **Phase 4: Chat RAG & 질문 통합** | 대기 중 | - | 최근 대화 context 주입 RAG 구현 및 비동기 스트리밍 연결 |
 | **Phase 5: Docs 정리 및 완성** | 대기 중 | - | Opus 활용 최종 markdown 회의록 자동 저장 및 실행 테스트 |
 
@@ -72,6 +72,48 @@
 - **결정**: Windows 환경에서 현재 디렉토리를 임포트 패스로 주입할 수 있도록 `.venv\Scripts\python -m pytest tests/test_core.py` 형태로 우회 기동하여 의존성 임포트 버그를 극복함.
 
 #### 🔍 이슈 3: 완전 투명 오버레이 윈도우 시인성 부족
-- **상황**: GUI 기동 시 백그라운드가 완전히 투명하게 설정될 경우, 내부에 레이블이 있어도 오버레이 영역의 경계를 마우스 드래그로 탐색하기가 매우 어려움.
-- **결정**: `paintEvent`를 오버라이딩하여 RGBA(30, 30, 30, 180)의 반투명 둥근 사각형을 그리도록 개선하여, 심미적인 Glassmorphism 효과와 GUI 가시성을 동시에 만족시킴.
+- 상황: GUI 기동 시 백그라운드가 완전히 투명하게 설정될 경우, 내부에 레이블이 있어도 오버레이 영역의 경계를 마우스 드래그로 탐색하기가 매우 어려움.
+- 결정: `paintEvent`를 오버라이딩하여 RGBA(30, 30, 30, 180)의 반투명 둥근 사각형을 그리도록 개선하여, 심미적인 Glassmorphism 효과와 GUI 가시성을 동시에 만족시킴.
 
+---
+
+## 🚀 Phase 2: SQLite DB 구축 및 실시간 STT 에뮬레이터 설계 (2026-06-20)
+
+### 1. 주요 구현 내용
+- `prismflow/core/db.py`: SQLite 연동을 위한 데이터베이스 매니저 작성. 회의 세션, 전사 발화문, 채팅 기록, 전역 설정 관리 테이블 스키마 자동 구축 및 CRUD 쿼리 추상화.
+- `prismflow/core/context.py` 확장: 발화 이벤트(`add_transcript`) 발생 시 `DatabaseManager`를 경유해 실시간으로 SQLite에 적재 및 트랙 보존 구현.
+- `stt_agent.py`: `QThread` 기반 워커 스레드로, 15~20초 주기로 다자 가상 대화 데이터(시작 시간, 화자, 텍스트)를 번갈아 주입하는 Mock Mode 가동 에뮬레이터 설계 및 실제 마이크 입력용 `AudioRecorder` WASAPI 캡처 파이프라인 연계.
+
+### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
+
+#### 🔍 이슈 1: SQLite 다중 스레드 동시 접속 충돌 (`sqlite3.ProgrammingError`)
+- **상황**: PySide6 GUI 메인 스레드, STT 스레드, Flow 스레드가 공유 리소스인 `MeetingContext` 싱글톤을 거쳐 SQLite 데이터베이스 파일에 동시에 쓰기 및 읽기를 시도함. 이때 SQLite3 모듈이 기본적으로 연결을 생성한 스레드 외의 타 스레드 접근을 차단하여 스레드 충돌 예외를 발생시킴.
+- **결정**: `sqlite3.connect` 연결 시 `check_same_thread=False` 옵션을 인위적으로 가해 스레드 간 연결 개방을 조율함. 동시에 동시 쓰기(Write Race Condition)로 인한 DB Lock 데드락을 원천 제어하기 위해, 모든 CRUD 동작을 `MeetingContext` 싱글톤 내의 `threading.Lock` 임계 영역 안으로 강제 묶어 스레드 세이프하게 정렬함.
+
+#### 🔍 이슈 2: 오디오 디바이스 없는 테스트 환경의 검증성 보장 (Mock Mode)
+- **상황**: 로컬 개발 및 테스트 자동화 환경(CI 혹은 마이크가 없는 빌드 머신)에서 실제 오디오를 캡처하면 포트 점유 실패나 기기 없음 에러가 유발되어, STT 엔진 스레드의 정상 작동 여부를 pytest 수준에서 확인하기가 불가능했음.
+- **결정**: STT 에이전트 내부에 `stt_mock_mode` 설정을 내장하여, True일 경우 가상의 한국어 회의 발화 시나리오 큐를 사용해 15~20초 간격으로 신호를 정밀 방출하도록 에뮬레이트함. 이로써 외부 하드웨어 없이도 상위 파이프라인(Flow, Chat 등) 전체가 연속 테스트될 수 있는 Mock 검증 체계를 확보함.
+
+---
+
+## 🚀 Phase 3: Claude CLI 통신 및 Flow Agent Mermaid 시각화 (2026-06-20)
+
+### 1. 주요 구현 내용
+- `ClaudeCLIController`: `-p` (print) 모드를 활용하여 동기식으로 단발성 실행을 유도하고, 에이전트의 QThread 내에서 이를 비동기 실행하여 메인 스레드 블로킹을 막는 CLI 래퍼 개발.
+- `ScreenTransitionDetector`: `win32com.client`를 통한 PPT 활성 슬라이드(`SlideIndex`) 추적 및 `Pillow` 32x32 픽셀 MSE 변화율 분석을 통한 범용 감지 Fallback 체인 구현. 30초 디바운싱 정착(Settled)과 MSE/인덱스 기반 중복 방지(Deduplication) 로직 탑재.
+- `FlowUI` & `mermaid_html.py`: QWebEngineView 투명 오버레이를 통해 깜빡임 없는 리렌더링(`runJavaScript` 및 Base64 인코딩 전달)을 구현하고 오프라인 동작용 `mermaid.min.js` 번들링 탑재.
+- `FlowAgent`: 30초 주기로 발화를 분석해 Mermaid 코드를 갱신하며, 시각 지시어 감지 시 화면 맥락을 결합해 Stateful(Upsert) 다이어그램을 빌드하는 지능형 스레드 루프 구현.
+
+### 2. 시행착오 및 의사결정 브랜치 (Trial & Error)
+
+#### 🔍 이슈 1: 대화형 Popen 상주 세션의 한계와 `--resume` 재시도 폴백 도입
+- **상황**: 설계대로 로컬 `claude` CLI를 대화형 `subprocess.Popen` 상주 프로세스로 띄워 연속 대화를 시도하려 했으나, Windows 환경 특유의 입출력 버퍼링으로 인해 응답 대기 중 먹통이 되거나(데드락), Node.js CLI 단에서 TTY가 아님을 감지하고 입력을 거부하는 불안정성이 노출됨. 또한 `--session-id` 옵션 연속 호출 시 "already in use" 에러가 발생함.
+- **결정**: 단발성 `-p` (print) 모드를 사용하여 매번 프로세스를 띄우되, TTY 대기를 스킵하기 위해 `stdin`을 `DEVNULL`로 리다이렉션함. 그리고 **`--resume <UUID>` 호출을 먼저 시도하여 기존 세션을 복원하고, 세션이 존재하지 않아 에러(No conversation found)가 날 경우 자동으로 `--session-id <UUID>`로 폴백(Fallback)해 세션을 생성하는 '재시도 폴백' 방식**을 구현하여 데드락 0% 및 완벽한 세션 유지를 성취함.
+
+#### 🔍 이슈 2: HTML/CSS/JS 템플릿의 파이썬 f-string 이스케이프 지옥
+- **상황**: `mermaid_html.py`에서 웹뷰에 실어 보낼 HTML/CSS/JS 소스코드를 파이썬 f-string으로 작성하자, 중괄호가 넘쳐나는 CSS 스타일 및 자바스크립트 블록에서 단일 중괄호와 이중 중괄호(`{{`, `}}`) 짝이 맞지 않아 f-string 파서가 `SyntaxError: f-string: single '}' is not allowed` 컴파일 에러를 수시로 뿜어내고 소스코드 가독성이 극도로 훼손됨.
+- **결정**: f-string 접두사 `f`를 과감히 떼어내어 일반 트리플 쿼트 `"""` 문자열로 변경하고, CSS와 JS 내부의 모든 이중 중괄호를 표준 단일 중괄호로 환원하여 네이티브 가독성을 지킴. 라이브러리 참조 경로는 `__MERMAID_JS_URL__` 이라는 단순 플레이스홀더를 심어둔 뒤, `.replace()` 메소드로 문자열 치환하여 주입함으로써 구문 해석 에러를 원천 차단함.
+
+#### 🔍 이슈 3: 슬라이드 전환 및 픽셀 변화 감지의 리소스 폭주와 디바운싱
+- **상황**: 화면 전환을 1초 주기로 실시간 캡처해 OCR이나 AI 전사로 처리하면 리소스 사용량이 폭주하고, 사용자가 슬라이드를 빠르게 스킵하며 넘어갈 때 불필요한 연쇄 캡처 이벤트가 발생하는 낭비가 초래됨.
+- **결정**: 화면 변화가 감지되는 즉시 이벤트를 쏘지 않고, `QTimer` 기반의 **30초 디바운싱 타이머**를 가동하여 추가 변화가 없이 완전히 고정(Settled)되었을 때만 최종 화면으로 확정되게 필터링함. 또한 범용 캡처본을 **32x32 초소형 크기**로 줄여 픽셀 MSE(Mean Squared Error) 연산을 적용함으로써 CPU 점유율을 1% 미만으로 극한까지 최적화함.

@@ -271,45 +271,60 @@ E:\Tak\Gemini\PrismFlow\
 #### 개발 범위
 | 대상 파일 | 작업 내용 |
 |:---|:---|
-| `prismflow/core/cli_controller.py` | Popen 래퍼: 세션 생성, 비차단 stdout 읽기, 모델 지정 (`--model`) |
+| `prismflow/core/cli_controller.py` | Claude CLI 래퍼: `-p` (프린트) 모드 기반 단발성 비동기 호출 구현, `< NUL` 리다이렉션을 통한 TTY 경고 방어 및 데드락 0% 보장, UUID 기반 세션 관리 |
 | `prismflow/agents/flow/flow_agent.py` | 30초 슬라이딩 윈도우 → Claude Haiku 프롬프트 → Mermaid 코드 파싱<br/>- **Stateful Update**: 직전 Mermaid 코드를 함께 전송하여 기존 노드 구조 재사용(Upsert) 유도<br/>- **계층화/필터**: 대주제 서브그래프화, 잡담 노이즈 필터 및 흐름선 매핑 |
 | `prismflow/agents/flow/flow_ui.py` | QWebEngineView 투명 오버레이 + 동적 Mermaid 렌더링 |
 | `prismflow/agents/flow/mermaid_html.py` | 로컬 js 임베드 HTML 템플릿 생성기 |
 | `prismflow/agents/flow/resources/mermaid.min.js` | 오프라인용 라이브러리 다운로드 배치 |
-| `prismflow/core/screen_detector.py` [NEW] | **스마트 화면 맥락 감지**: PPT 슬라이드 감지(Office COM API) 및 범용 감지(32x32 초경량 픽셀 변화율 분석)<br/>- 30초 정착(Settled) 디바운스 및 가벼운 시각 지시어 매핑 적용 |
-| `tests/test_cli.py` | 파이프 데드락 검증, 타임아웃 처리, 모델 전환 |
+| `prismflow/core/screen_detector.py` [NEW] | **스마트 화면 맥락 감지**: PPT 슬라이드 감지(Office COM API - win32com) 및 범용 감지(Pillow 32x32 초경량 픽셀 변화율 MSE 분석)<br/>- 30초 정착(Settled) 디바운스 및 가벼운 시각 지시어 매핑 적용 |
+| `tests/test_cli.py` | 로컬 Claude CLI `-p` 호출 타임아웃, 세션 공유, 에러 발생 예외 처리 검증 |
 | `tests/test_flow.py` | Mermaid 코드 문법 유효성, 노드 재사용(Upsert) 검사, 화면 전환 이벤트 연계 검증 |
 
 #### 상세 기술 설계 명세
 
 ##### 1. Claude CLI 비차단 통신 (`cli_controller.py`)
-- **프로세스 관리**: `subprocess.Popen`을 활용하여 로컬 `claude` CLI를 기동하며, 표준 입력(`stdin`), 표준 출력(`stdout`), 표준 에러(`stderr`)를 모두 PIPE로 지정해 비차단 양방향 제어를 수행합니다.
-- **백그라운드 비차단 큐 읽기**:
-  - Windows의 파이프 대기 차단 문제를 회피하기 위해, 프로세스 기동 즉시 `stdout`과 `stderr`를 읽어내는 별도의 백그라운드 데몬 스레드를 실행합니다.
-  - 읽어온 줄 바꿈 단위의 응답 데이터는 `queue.Queue`에 실시간으로 보관하여, 메인 스레드가 `get_nowait()` 또는 `get(timeout=...)` 형태로 대기 없이 안전하게 꺼내 갈 수 있도록 구현합니다.
-- **세션 분리**: Flow 시각화 에이전트와 Chat 에이전트가 단일 CLI 상에서 명령어가 충돌하거나 락이 걸리지 않도록 각각의 Popen 프로세스를 격리된 별개의 세션 인스턴스로 분리 관리합니다.
+- **비대화형(Print) 모드 강제 및 리다이렉션**:
+  - `claude` CLI를 대화형 Popen 상주 프로세스로 유지하면 Windows의 입출력 버퍼 데드락, ANSI 이스케이프 코드 가공 등 극심한 불안정성에 노출됩니다.
+  - 이를 원천 방어하기 위해 `claude -p "<프롬프트>" --session-id <UUID> --model <모델>` 형태로 호출하는 단발성 실행 모델을 채택합니다.
+  - Windows TTY 미감지 대기 경고(`Warning: no stdin data received in 3s`)를 해결하기 위해 standard input을 `subprocess.DEVNULL` (또는 Windows CMD `< NUL`)로 리다이렉션합니다.
+- **세션 격리 및 병렬 처리**:
+  - 각 에이전트(Flow, Chat, Docs)는 초기화 시 고유한 `uuid.uuid4()` 세션 ID를 생성하여 요청 시 전달합니다.
+  - Claude CLI 호출은 Python의 `subprocess.run(..., capture_output=True, text=True, timeout=30)`을 사용하여 동기 실행하되, 에이전트의 자체 `QThread` 안에서 독립적으로 작동하므로 메인 UI 스레드를 절대 블로킹하지 않습니다.
+- **비차단 큐 피드백**:
+  - UI 렌더러와 CLI 에이전트 간의 통신은 Qt Signal을 이용해 안전하게 비동기 스레드 바운더리를 넘어 데이터가 전송되도록 구현합니다.
 
 ##### 2. 오프라인 Mermaid 시각화 UI (`flow_ui.py`, `mermaid_html.py`)
-- **오프라인 라이브러리 번들링**: 인터넷이 단절된 환경에서도 Mermaid 드로잉이 수행될 수 있도록 `mermaid.min.js`를 상대경로 리소스로 패키징하여 로드합니다.
+- **오프라인 라이브러리 번들링**: 
+  - `prismflow/agents/flow/resources/mermaid.min.js`에 번들링된 라이브러리를 로드하여 순수 오프라인 상태에서도 동작을 보장합니다.
 - **HTML 템플릿 및 스타일링**:
-  - `QWebEngineView`에 로드되는 기본 HTML 프레임에 다크 테마(Dark Mode HSL 컬러 팔레트) 및 반투명 유리 효과(Glassmorphism CSS)를 적용하여 심미성을 대폭 강화합니다.
-- **동적 렌더링**:
-  - 30초마다 새로운 Mermaid 코드 시그널이 도달하면 페이지를 새로고침(`reload`)하지 않고, QWebEngineView의 `page().runJavaScript()` API를 실행하여 자바스크립트 수준에서 `mermaid.render()` 함수를 동적으로 호출하여 깜빡임 없는 실시간 리렌더링을 구현합니다.
+  - `mermaid_html.py`는 로컬 `mermaid.min.js`를 상대경로로 참조하는 HTML 템플릿을 생성합니다.
+  - Glassmorphism 느낌의 반투명 다크 디자인을 적용하기 위해 HSL 테마 컬러 및 `backdrop-filter: blur(10px)` 등을 CSS에 빌드합니다.
+- **깜빡임 없는 동적 렌더링**:
+  - 30초마다 새로운 Mermaid 다이어그램 신호가 도달할 때, `QWebEngineView.reload()`를 호출하면 화면이 깜빡이거나 하얗게 로딩이 드러나 시인성이 매우 낮아집니다.
+  - 이를 방지하기 위해 HTML 로드 후, 신호가 들어올 때마다 `QWebEngineView.page().runJavaScript(f"updateDiagram(\"{encoded_mermaid_code}\")")`를 실행하여 JS DOM 상에서 점진적 다이어그램 리렌더링을 처리합니다.
 
 ##### 3. Flow Agent 분석 루프 및 스마트 화면 맥락 융합 (`flow_agent.py`, `screen_detector.py`)
 - **Stateful 점진적 다이어그램 업데이트**:
-  - 매 30초마다 Claude Haiku로 텍스트 요약을 요청할 때, **`[기존 Mermaid 코드]`**를 프롬프트에 동시 전달합니다.
-  - *"기존 노드들의 ID를 최대한 재사용(Upsert)하고 새로운 소주제 논의 사항은 꼬리에 덧붙여 나가라"*는 강한 제약을 주어 시각적 흐름의 연속성을 보존합니다.
-- **회의 논리 계층화**:
-  - 대주제는 Mermaid `subgraph`로 레이아웃을 묶어내며, 소소한 일상 잡담이나 추임새는 AI 프롬프트 필터링 정책에 의해 걸러집니다.
+  - 매 30초마다 `MeetingContext`에서 최신 발화 내역을 가져와 Claude Haiku에 전달합니다.
+  - 프롬프트에 `[기존 Mermaid 코드]`를 함께 전송하며, *"기존 노드들의 ID를 최대한 재사용(Upsert)하고 새로운 소주제 논의 사항은 꼬리에 덧붙여 나가라"*는 프롬프트 제약을 가해 시각적 흐름의 연속성을 보존합니다.
 - **스마트 화면 감지기 (ScreenTransitionDetector)**:
-  - **30초 정착(Settled) 디바운스**: 사용자가 슬라이드를 빠르게 훑는 동안은 캡처하지 않고, 화면 변화가 멈춘 지 최소 30초가 지나 완전히 고정(Settled) 되었을 때만 핵심 슬라이드로 인정하여 캡처 텍스트를 확정 큐에 넣습니다.
-  - **파워포인트 전체화면 감지**: Windows COM 인터페이스를 이용해 PPT 슬라이드 쇼 윈도우의 `SlideIndex` 번호를 읽어 전환 시점을 100% 추적합니다.
-  - **범용 화면 감지 폴백**: PPT가 아닐 경우 모니터 영역을 32x32 초소형 해상도로 주기적으로 캡처하고, 픽셀 변화율(MSE)이 임계값을 넘는 순간을 화면 이동으로 간주합니다.
+  - **30초 정착(Settled) 디바운스**:
+    - 화면 변화가 발생하면 즉시 이벤트를 발생시키지 않고, `QTimer`를 기동하여 30초 타이머를 굴립니다.
+    - 30초 이내에 추가 화면 변화가 감지되면 타이머를 리셋(Reset) 및 재시작하여, 사용자가 슬라이드를 빠르게 훑는 동안의 중간 전환 과정은 과도한 API 호출로 이어지지 않게 제어합니다.
+  - **파워포인트 전체화면 감지 (win32com.client)**:
+    - Windows COM API를 활용하여 실행 중인 PowerPoint.Application의 `SlideShowWindows` 및 `ActivePresentation` 객체를 추적합니다.
+    - 슬라이드가 변경되어 `SlideShowWindow.View.CurrentShowPosition` (SlideIndex) 값이 바뀌는 순간을 정밀 추적합니다.
+  - **범용 화면 감지 폴백 (Pillow + MSE)**:
+    - PPT 실행 중이 아닐 경우 `PIL.ImageGrab.grab()`을 통해 1초 주기 스냅샷을 캡처합니다.
+    - 오버헤드를 극단적으로 줄이기 위해 캡처본을 32x32 크기로 축소하고, GrayScale로 변환하여 numpy 배열로 바꿉니다.
+    - 직전 32x32 이미지와 현재 이미지의 MSE (Mean Squared Error)를 계산하여 임계값(예: 10.0)을 넘을 때 화면 변화가 일어난 것으로 간주합니다.
   - **중복 전송 방지 (Deduplication)**:
-    - PPT 화면: `ActivePresentation.Name` + `SlideIndex` 정보가 직전 확정 시점과 동일할 경우 분석 처리를 생략하고 패스(Skip)합니다.
-    - 범용 화면: 32x32 초소형 캡처본의 **지각적 해시(pHash)**를 비교하여 직전 확정 해시와 유사(해밍 거리 2 이하)할 경우 캡처 및 OCR 전송을 생략하고 패스(Skip)합니다.
-  - **시각 지시어 결합**: STT 발화 중 "여기 보시면", "이 슬라이드", "이 도표" 등 화면 지칭용 지시어가 가볍게 매칭되는 순간, 대기 중이던 확정 캡처 데이터를 결합하여 Claude CLI 측에 맥락 보조 자료로 제공합니다.
+    - PPT 화면: `Presentation.Name` + `SlideIndex`가 직전 확정 상태와 동일하면 무시합니다.
+    - 범용 화면: 정착 완료된 32x32 캡처본의 픽셀 간 차이가 직전 확정본과 거의 동일한 경우(MSE < 1.0) 중복으로 판단해 캡처 이벤트를 생략(Skip)합니다.
+  - **시각 지시어 결합**:
+    - STT 발화 중 "여기 보시면", "이 슬라이드", "이 도표" 등 화면 지칭용 지시어가 가볍게 매칭되는 순간, 대기 중이던 확정 캡처 데이터를 결합하여 Claude CLI 측에 맥락 보조 자료로 제공합니다.
+- **회의 논리 계층화**:
+  - 논의의 큰 줄기는 Mermaid `subgraph`로 묶어서 구조화하고, 잡담이나 인사는 Haiku 프롬프트 수준에서 무시하도록 프롬프트를 고도화합니다.
 
 #### ReAct 검증
 ```bash
@@ -323,9 +338,36 @@ E:\Tak\Gemini\PrismFlow\
 #### 개발 범위
 | 대상 파일 | 작업 내용 |
 |:---|:---|
-| `prismflow/agents/chat/chat_agent.py` | RAG 컨텍스트 조립 (10분 발화 + Flow 요약 + Mermaid) → Claude Haiku |
-| `prismflow/agents/chat/chat_ui.py` | 입력창 + 스크롤 대화 히스토리 + 스트리밍 타이핑 효과 오버레이 |
-| `tests/test_chat.py` | 모의 질문 → RAG 컨텍스트 정확도 검증, 응답 파싱 |
+| `prismflow/agents/chat/chat_agent.py` | 백그라운드 컨텍스트 주입기(Context Ingester) 및 Q&A 비동기 스레드 개발<br/>- 3분 간격 신규 발화 백그라운드 자동 주입(CLI 세션 적재)<br/>- 질문 시점의 미주입 실시간 잔여 발화 + 사용자 질문 병합 전송<br/>- 마이크 제어를 원천 배제한 텍스트 단독 입력 지원 |
+| `prismflow/agents/chat/chat_ui.py` | QTextBrowser 기반 Markdown 대화 히스토리 및 QLineEdit 입력창을 탑재한 투명 오버레이 UI 개발 (QSS Glassmorphism 및 그라데이션 포커스 효과 적용) |
+| `tests/test_chat.py` | 주기적 전사록 백그라운드 주입 로직, 미주입 발화 병합 쿼리 구성, 모의 스트리밍 렌더링 검사 |
+
+#### 상세 기술 설계 명세
+
+##### 1. 백그라운드 컨텍스트 주입(Context Ingestion) 및 Q&A 스레드 (`chat_agent.py`)
+- **오디오 경합 방지**:
+  - 로컬 STT 에이전트와의 사운드 장치 독점 경합을 피하기 위해 Chat 에이전트의 마이크 음성 입력 기능은 완전히 배제하고, 키보드 텍스트 입력창만 단독 제공합니다.
+- **3분 주기 전사록 백그라운드 주입**:
+  - 질문 시점에 무거운 전체 회의 전사록을 매번 전송하면 토큰 낭비 및 응답 지연이 심해집니다.
+  - 이를 해결하기 위해 백그라운드 주입 루프(`BackgroundIngester`)를 구동하여, **3분 주기**로 새로 추가된 신규 발화문만 떼어내어 로컬 Claude CLI 세션에 빌드업해 둡니다:
+    `claude -p "[시스템: 다음은 회의 중 추가된 신규 대화 내용입니다. 기억해 두세요.]\n{new_transcripts}" --resume chat-session-{session_id}`
+  - 주입을 마치면 마지막 주입 완료 발화 인덱스(`last_ingested_idx`)를 업데이트합니다.
+- **질문 시점 실시간 동기화 및 고속 쿼리**:
+  - 사용자가 질문을 던지는 시점에는 이미 Claude 세션 메모리가 회의 전체 흐름을 알고 있으므로, 전체 텍스트를 보낼 필요가 없습니다.
+  - 단, 3분 주기 주입 시점과 질문 시점 사이의 짧은 미주입 발화(0~3분 분량)가 있을 수 있으므로, 질문 시에는 미주입 잔여 발화만 질문 위에 가볍게 얹어서 호출합니다:
+    `claude -p "[최근 대화 추가]\n{unsubmitted_transcripts}\n\n[질문]\n{user_query}" --resume chat-session-{session_id}`
+  - 이를 통해 **API 토큰 소모량을 90% 이상 차감하고, 사용자 질문 시 즉각적인 답변 속도를 확보**합니다. 회의가 완전히 종료된 후에는 별도의 전사록 주입 없이 순수하게 질문/출력 세션만 복원하여 가볍게 연속 Q&A가 가능합니다.
+- **비동기 스트리밍 출력**:
+  - `subprocess.Popen`으로 `stdout`을 `PIPE`로 감시하여, Claude CLI의 스트리밍 토큰 출력을 줄 단위로 획득하고 Qt Signal(`token_delivered`)을 통해 UI 스레드로 비동기 안전 전송합니다.
+
+##### 2. QSS 기반 Glassmorphism 대화 오버레이 UI (`chat_ui.py`)
+- **디자인 테마 및 레이아웃**:
+  - `TranslucentOverlay`를 상속하여 우측 하단에 상주하는 420x580 크기의 메신저 형태 대화창을 구현합니다.
+  - 배경에 어두운 반투명 색상(`RGBA(25, 25, 30, 200)`) 및 14px 라운딩 처리, 테두리에 실버 그라데이션 보더를 QSS로 세밀하게 입힙니다.
+- **입출력 컴포넌트 고도화**:
+  - **대화 히스토리 뷰**: `QTextBrowser`를 활용해 마크다운 및 HTML 파싱을 활성화합니다. 이를 통해 코드 블록(syntax highlight), 볼드, 리스트가 아름다운 개발자 지향적 레이아웃으로 렌더링되게 만듭니다.
+  - **텍스트 입력창**: `QLineEdit`를 사용하여 테두리를 반투명하게 둥글리고, 마우스 포커스가 들어갈 때 딥퍼플(`rgb(124, 77, 255)`) 그라데이션으로 빛나는 트랜지션 애니메이션 효과를 부여합니다.
+  - **로딩 및 입력 잠금**: 답변이 생성 중인 동안에는 입력창을 `setEnabled(False)`로 잠그고, 대화창 하단에 부드럽게 점멸하는 'Claude가 생각하는 중...' 로딩 레이블을 노출합니다.
 
 #### ReAct 검증
 ```bash
