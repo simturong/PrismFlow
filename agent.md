@@ -1,0 +1,110 @@
+# PrismFlow Agent Guidebook (agent.md)
+
+이 파일은 AI 개발 에이전트가 PrismFlow 코드를 분석하거나 수정할 때 길을 잃지 않도록 안내하는 **프로젝트 온보딩 및 내비게이션 가이드**입니다.
+
+---
+
+## 🧭 빠른 내비게이션 & 파일 탐색 가이드
+
+개발하거나 소스 코드를 읽을 때 아래의 순서와 안내를 참고하여 접근하십시오.
+
+### 1. 코드 파악을 위한 추천 읽기 순서
+1. [agent.md](file:///E:/Tak/Gemini/PrismFlow/agent.md) (본 파일)을 통해 전체 디렉토리 구성과 작업 가이드를 숙지합니다.
+2. [main.py](file:///E:/Tak/Gemini/PrismFlow/main.py)를 열어 전체 프로그램의 기동 흐름과 에이전트 스레드 조율 구조를 파악합니다.
+3. [prismflow/core/context.py](file:///E:/Tak/Gemini/PrismFlow/prismflow/core/context.py)를 열어 스레드 간 상태를 공유하는 싱글톤 객체 구조를 파악합니다.
+4. [prismflow/core/cli_controller.py](file:///E:/Tak/Gemini/PrismFlow/prismflow/core/cli_controller.py)를 통해 백그라운드 Claude CLI 파이프 비차단 통신 구조를 이해합니다.
+
+### 2. 무언가를 수정하고 싶을 때 어디로 가야 하나요?
+
+| 수정하고 싶은 기능 | 열어야 할 파일 / 폴더 | 관련 테스트 파일 |
+| :--- | :--- | :--- |
+| **시스템 트레이 아이콘 / 마우스 메뉴** | [prismflow/ui_common/tray.py](file:///E:/Tak/Gemini/PrismFlow/prismflow/ui_common/tray.py) | [tests/test_ui.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_ui.py) |
+| **투명 오버레이 창의 공통 스타일 (페이드 효과, 드래그)** | [prismflow/ui_common/overlay.py](file:///E:/Tak/Gemini/PrismFlow/prismflow/ui_common/overlay.py) | [tests/test_ui.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_ui.py) |
+| **SQLite 데이터베이스 / 테이블 스키마 / DB 쿼리** | [prismflow/core/db.py](file:///E:/Tak/Gemini/PrismFlow/prismflow/core/db.py) | [tests/test_db.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_db.py) |
+| **Claude CLI와 직접 파이프 연결 및 통신 방식** | [prismflow/core/cli_controller.py](file:///E:/Tak/Gemini/PrismFlow/prismflow/core/cli_controller.py) | [tests/test_cli.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_cli.py) |
+| **실시간 녹음 / 음성 파일 저장 / STT 변환 / Mock 모드 변경** | [prismflow/agents/stt/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/stt) | [tests/test_stt.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_stt.py) |
+| **Mermaid 흐름도 렌더링 / QWebEngineView / 흐름도 요약 알고리즘** | [prismflow/agents/flow/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/flow) | [tests/test_flow.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_flow.py) |
+| **사용자 질문 처리 / RAG 컨텍스트 병합 / 채팅 UI 및 답변 스트리밍** | [prismflow/agents/chat/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/chat) | [tests/test_chat.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_chat.py) |
+| **회의 종료 시 최종 Markdown 보고서 생성 규칙** | [prismflow/agents/docs/](file:///E:/Tak/Gemini/PrismFlow/prismflow/agents/docs) | [tests/test_docs.py](file:///E:/Tak/Gemini/PrismFlow/tests/test_docs.py) |
+
+---
+
+## 🗺️ 프로젝트 트리 구조 (AI 최적화 수직 슬라이스)
+
+```text
+E:\Tak\Gemini\PrismFlow\
+├── agent.md                        # 본 파일 (프로젝트 내비게이션, 코딩 규칙 가이드)
+├── main.py                         # 앱 전체 진입점
+├── run.bat                         # Windows 원클릭 실행 배치 스크립트
+│
+├── docs/                           # 산출물 보관 폴더
+│   ├── implementation_plan.md      # 각 Phase 작업 시작 전 작성/업데이트하는 상세 구현 계획서
+│   ├── task.md                     # 각 Phase 작업 완료 후 업데이트하는 전체 진행률 및 Task 상태판
+│   └── history.md                  # [신설] 각 Phase 완료 시 작성하는 개발 시행착오 및 히스토리 위키
+│
+├── tests/                          # ReAct 검증용 단위/통합 테스트 코드 디렉토리
+│   ├── __init__.py
+│   ├── conftest.py                 # PyTest 공통 피스처 및 DB/CLI 모크 설정
+│   ├── test_db.py                  # SQLite CRUD 비즈니스 로직 테스트
+│   ├── test_cli.py                 # Claude CLI 파이프 비차단 IO 테스트
+│   ├── test_stt.py                 # VAD 및 STT 에뮬레이터 테스트
+│   ├── test_flow.py                # Mermaid 코드 생성 및 흐름도 갱신 테스트
+│   └── test_chat.py                # Chat RAG 프롬프트 병합 및 응답 테스트
+│
+└── prismflow/                      # 메인 패키지 루트
+    ├── __init__.py
+    │
+    ├── core/                       # 중앙 제어 및 데이터 핵심 레이어 (Core)
+    │   ├── __init__.py
+    │   ├── config.py               # 전역 환경설정
+    │   ├── context.py              # Thread-safe 데이터 버스 (싱글톤)
+    │   ├── db.py                   # SQLite DB 연동 및 테이블 스키마/CRUD
+    │   └── cli_controller.py       # 로컬 Claude CLI 통신 컨트롤러 (비차단 큐)
+    │
+    ├── ui_common/                  # UI 공통 레이아웃/리소스
+    │   ├── __init__.py
+    │   ├── tray.py                 # 시스템 트레이 메뉴 관리
+    │   └── overlay.py              # 드래그/반투명 애니메이션 오버레이 베이스 클래스
+    │
+    └── agents/                     # [수직 슬라이스 격리 구조 - 토큰 최적화용 에이전트 목록]
+        ├── stt/                    # ① STT & 오디오 에러 제어 에이전트
+        │   ├── __init__.py
+        │   ├── stt_agent.py        # STT 비동기 스레드 (Mock 기능 포함)
+        │   └── audio.py            # 마이크/루프백 오디오 캡처 유틸
+        │
+        ├── flow/                   # ② Flow 시각화 에이전트
+        │   ├── __init__.py
+        │   ├── flow_agent.py       # 30초 주기 다이어그램 생성 스레드
+        │   ├── flow_ui.py          # QWebEngineView 기반 투명 오버레이 윈도우
+        │   ├── mermaid_html.py     # 로컬 HTML/CSS 템플릿
+        │   └── resources/
+        │       └── mermaid.min.js  # 로컬 오프라인용 라이브러리
+        │
+        ├── chat/                   # ③ Chat 어시스턴트 에이전트
+        │   ├── __init__.py
+        │   ├── chat_agent.py       # RAG 프롬프트 병합 및 Q&A 스레드
+        │   └── chat_ui.py          # 질문 입력 및 대화 히스토리 표출 윈도우
+        │
+        └── docs/                   # ④ Docs 최종 요약 보고서 에이전트
+            ├── __init__.py
+            └── docs_agent.py       # 회의 종료 요약 및 마크다운 파일 출력 스레드
+```
+
+---
+
+## 🛠️ 핵심 코딩 및 에이전트 개발 수칙
+
+> **Karpathy 4원칙** — 모든 코드 작성/수정 시 반드시 준수
+> 1. 짐작으로 코딩하지 말 것 — 가정은 사용자에게 먼저 확인
+> 2. 최소한의 코드만 작성 — 요구되지 않은 기능 추가·오버엔지니어링 금지
+> 3. 외과적 수정 — 문제 부분만 건드리고 무관한 코드를 임의 리팩토링하지 말 것
+> 4. 목표가 완벽히 검증될 때까지 확실하게 — 애매하게 넘기지 말 것
+
+1. **최소한만 읽고 고치십시오 (Context Splitting)**:
+   - 특정 기능(예: Chat)을 수정할 때는 해당 `prismflow/agents/chat/` 폴더 하위 파일들과 공통 인터페이스만 조회하십시오. 다른 기능 폴더는 무분별하게 읽어 컨텍스트 토큰을 낭비하지 마십시오.
+2. **ReAct 검증을 즉시 돌리십시오**:
+   - 코드를 한 단락 작성하면 바로 터미널에서 관련 테스트 코드([tests/](file:///E:/Tak/Gemini/PrismFlow/tests))를 실행하십시오 (`pytest tests/test_xxx.py`).
+   - 테스트 검증을 통과한 뒤에만 사용자에게 보고하고 다음 단계로 진행합니다.
+3. **개발 히스토리 위키 작성 (`docs/history.md`)**:
+   - **매 Phase 개발 단계가 완료될 때마다** [docs/history.md](file:///E:/Tak/Gemini/PrismFlow/docs/history.md)를 반드시 업데이트해야 합니다.
+   - 업데이트 시 발생한 시행착오(Trial & Error), 대안 비교, 블로커 상황 및 교훈(Lesson Learnt)을 **스토리텔링** 형식으로 작성하여 보관하십시오.
