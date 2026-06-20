@@ -37,7 +37,8 @@ class AppConfig:
             # 권한 등의 문제로 폴더 생성 실패 시 예외 처리
             pass
             
-        # DB의 settings에서 claude_cli_cmd 값을 조회하여 오버라이드 시도
+        # DB의 settings 테이블에서 사용자 설정을 조회하여 오버라이드 시도
+        # (db.py를 임포트하면 순환 참조가 발생하므로 순수 sqlite3로 경량 직접 조회)
         try:
             db_file = Path(self.db_path)
             if db_file.exists():
@@ -47,13 +48,36 @@ class AppConfig:
                 # settings 테이블 존재 확인
                 cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='settings'")
                 if cur.fetchone():
-                    cur.execute("SELECT value FROM settings WHERE key='claude_cli_cmd'")
-                    row = cur.fetchone()
-                    if row:
-                        self.claude_cli_cmd = row[0]
+                    cur.execute("SELECT key, value FROM settings")
+                    s = {k: v for k, v in cur.fetchall()}
+                    self._apply_db_settings(s)
                 conn.close()
         except Exception:
             pass
+
+    def _apply_db_settings(self, s: dict):
+        """SQLite settings 값으로 런타임 설정을 오버라이드한다(설정 UI ↔ 실엔진 배선)."""
+        if s.get("claude_cli_cmd"):
+            self.claude_cli_cmd = s["claude_cli_cmd"]
+        # STT Mock 모드 토글
+        if s.get("stt_mock_mode") is not None:
+            self.stt_mock_mode = str(s["stt_mock_mode"]).strip().lower() in ("1", "true", "yes", "on")
+        # VAD 임계값
+        if s.get("vad_threshold"):
+            try:
+                self.vad_threshold = float(s["vad_threshold"])
+            except (TypeError, ValueError):
+                pass
+        # 하드웨어 가속 → 추론 디바이스 (AUTO/GPU/NPU/CPU)
+        if s.get("hardware_acceleration"):
+            accel = str(s["hardware_acceleration"]).strip().upper()
+            self.stt_device = accel if accel in ("AUTO", "GPU", "NPU", "CPU") else "AUTO"
+        # Whisper 모델 크기 → 로컬 OV 모델 디렉토리명
+        if s.get("whisper_model_size"):
+            self.whisper_model_name = f"whisper-{s['whisper_model_size']}-int8-ov"
+        # HF 토큰(설정 UI 저장분 우선, 없으면 __init__의 환경변수 기본값 유지)
+        if s.get("hf_token"):
+            self.hf_token = s["hf_token"]
 
     @classmethod
     def load_default(cls):

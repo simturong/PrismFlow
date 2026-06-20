@@ -92,3 +92,15 @@
 - [x] 하드웨어 가속 강제 제어 시 오류 → 안전 폴백 — GPU 로드 실패 시 CPU 폴백
 - [x] `stt_mock_mode=False` 실측: `stt_live_test.py` 라이브 검증 — GPU·화자분리 ON, 한국어 전사 정확("안녕하세요 마이크 준비가 완료되었습니다…"). VAD endpoint 1.0초 튜닝으로 파편화 완화. (앱 통합 토글 실측 + 멀티화자 전역 일관성은 다음 단계)
 - [x] `tests/test_stt.py` 확장 — VAD 분절 단위테스트 + 디바이스 감지 + 실엔진 옵트인(`STT_LIVE=1`) 분리. 전체 `pytest tests/` → 41 passed, 1 skipped
+
+## Phase 6-3: 완성도 확보 (실엔진 앱 통합 · 하드닝 · 이중 검증) — ⏳ 승인 대기
+> Phase 7(배포) 진입 전 완성도 확보 단계. 남은 작업 전부를 묶음. 완료 기준 = ①에이전트 앱 통합 실측 ②사용자 실회의 검증 ③버그/사용성 개선 반영.
+- [ ] 6-3-1 설정 UI ↔ 실엔진 배선: `AppConfig` DB 오버라이드를 STT 설정(stt_mock_mode/whisper_model_name/stt_device/vad_threshold)까지 확장 + `SettingsDialog`에 Mock 토글·HF 토큰 필드 추가, 가속 옵션 실디바이스 정합, 모델크기↔OV 디렉토리 매핑
+- [ ] 6-3-2 앱 통합 실측(에이전트): `stt_mock_mode=False`로 run.bat 풀 구동 — 실음성→전사→Flow→Chat→종료→보고서 육안 검증 + 버그 즉시 수정
+- [ ] 6-3-3 멀티 화자 전역 일관성: 발화 임베딩 점증 클러스터링/코사인 매칭으로 전역 Speaker_XX 라벨 일관성 확보
+- [ ] 6-3-4 첫 실행 UX·에러 하드닝: 모델 미존재 안내/다운로드 상태, STT 실패 UI 토스트+Mock 폴백, 토큰 부재 안내
+- [ ] 6-3-5 이중 검증·개선 루프: 사용자 실회의(다인) 테스트 → 정확도/화자/지연/사용성 피드백 반영, vad/모델 튜닝
+- [ ] 6-3-6 정리·회귀: 설정 오버라이드/매핑 단위테스트 추가, 전체 회귀 유지, stt_live_test 정리·Pretendard 폰트 잔여 처리
+
+## Phase 7: 오프라인 원클릭 패키징 및 배포 (6-3 완료 후 착수)
+- [ ] (6-3 이중 검증 통과 전 착수 금지) Embeddable Python + 모델 번들 + Inno Setup 통합 인스톨러
