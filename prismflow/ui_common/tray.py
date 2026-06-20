@@ -27,6 +27,7 @@ class SystemTrayManager(QSystemTrayIcon):
         # UI 핸들 초기화
         self.flow_ui = None
         self.chat_ui = None
+        self.cli_log_window = None
         
         # 컨텍스트 신호 연결
         self.context.signals.meeting_started.connect(self._on_meeting_started)
@@ -54,7 +55,12 @@ class SystemTrayManager(QSystemTrayIcon):
         self.show_chat_action = QAction("AI 채팅 표시 (AI Chat)", self)
         self.show_chat_action.triggered.connect(self.restore_chat_ui)
         self.menu.addAction(self.show_chat_action)
-        
+
+        # 개발 디버깅용: CLI 주고받기 로그 창
+        self.show_cli_log_action = QAction("CLI 디버그 로그 (개발용)", self)
+        self.show_cli_log_action.triggered.connect(self.restore_cli_log)
+        self.menu.addAction(self.show_cli_log_action)
+
         self.menu.addSeparator()
         
         self.settings_action = QAction("설정", self)
@@ -67,10 +73,12 @@ class SystemTrayManager(QSystemTrayIcon):
         
         self.setContextMenu(self.menu)
 
-    def set_ui_handlers(self, flow_ui, chat_ui):
+    def set_ui_handlers(self, flow_ui, chat_ui, cli_log_window=None):
         """오버레이 UI들의 핸들을 주입받아 복원 제어에 사용합니다."""
         self.flow_ui = flow_ui
         self.chat_ui = chat_ui
+        if cli_log_window is not None:
+            self.cli_log_window = cli_log_window
 
     def restore_flow_ui(self):
         if self.flow_ui:
@@ -83,6 +91,13 @@ class SystemTrayManager(QSystemTrayIcon):
             self.chat_ui.showNormal()
             self.chat_ui.raise_()
             self.chat_ui.activateWindow()
+
+    def restore_cli_log(self):
+        if self.cli_log_window:
+            self.cli_log_window.show()
+            self.cli_log_window.showNormal()
+            self.cli_log_window.raise_()
+            self.cli_log_window.activateWindow()
 
     def restore_all_windows(self):
         self.restore_flow_ui()

@@ -8,6 +8,7 @@ from prismflow.core.context import MeetingContext
 from prismflow.core.cli_controller import ClaudeCLIController
 from prismflow.core.screen_detector import ScreenTransitionDetector
 from prismflow.ui_common.tray import SystemTrayManager
+from prismflow.ui_common.cli_log_window import CliLogWindow
 from prismflow.agents.flow.flow_ui import FlowUI
 from prismflow.agents.flow.flow_agent import FlowAgent
 from prismflow.agents.chat.chat_agent import ChatAgent
@@ -57,8 +58,11 @@ class AppCoordinator:
         self.chat_agent.error_occurred.connect(
             lambda e: self.status_hub.set_status("chat", AgentState.ERROR, self._first_word(e)))
 
+        # CLI 디버그 로그 창 (개발용) — 백그라운드 에이전트들의 CLI 주고받기를 한 곳에서 관찰
+        self.cli_log_window = CliLogWindow()
+
         # 트레이 매니저에 UI 핸들 주입
-        self.tray.set_ui_handlers(self.flow_ui, self.chat_ui)
+        self.tray.set_ui_handlers(self.flow_ui, self.chat_ui, self.cli_log_window)
 
         # Report Agent 기동 (회의 종료 시 최종 회의록 자동 컴파일)
         self.report_agent = ReportAgent(self.context, self.cli_controller)

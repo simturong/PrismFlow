@@ -36,6 +36,18 @@ class ClaudeCLIController:
         self._cli_exe = shutil.which(self.config.claude_cli_cmd) or self.config.claude_cli_cmd
         self._session_limited = False
 
+    def _log_activity(self, session_id, model, prompt: str, response: str, kind: str):
+        """CLI 교환 1건을 전역 활동 로그에 best-effort로 기록한다(디버그 창용).
+
+        기록은 절대 CLI 실행을 방해하면 안 되므로 모든 예외를 삼킨다. 또한 Qt/허브 임포트를
+        지연(lazy)하여, 허브를 쓰지 않는 단위 테스트에 불필요한 의존을 만들지 않는다.
+        """
+        try:
+            from prismflow.core.cli_activity import get_cli_activity_log
+            get_cli_activity_log().record(session_id, model, prompt, response, kind)
+        except Exception:
+            pass
+
     def _build_extra_args(self, model: Optional[str], system_prompt: Optional[str]) -> List[str]:
         """클린·경량 격리 실행을 위한 공통 인자(+모델/시스템 프롬프트)를 조립합니다."""
         args = list(_CLEAN_CLI_ARGS)
@@ -91,6 +103,21 @@ class ClaudeCLIController:
 
     def execute_command(self, prompt: str, session_id: str, model: Optional[str] = None,
                         timeout: int = 30, system_prompt: Optional[str] = None) -> str:
+        """Claude CLI를 실행하여 응답을 받아옵니다(디버그 활동 로그 래퍼).
+
+        실제 실행은 _execute_command_impl에 위임하고, 원본 세션명 기준으로 성공/오류 결과를
+        CLI 활동 로그에 기록한다(로그 기록 실패는 무시되어 실행에 영향을 주지 않음).
+        """
+        try:
+            out = self._execute_command_impl(prompt, session_id, model=model, timeout=timeout, system_prompt=system_prompt)
+            self._log_activity(session_id, model, prompt, out, "ok")
+            return out
+        except Exception as e:
+            self._log_activity(session_id, model, prompt, str(e), "error")
+            raise
+
+    def _execute_command_impl(self, prompt: str, session_id: str, model: Optional[str] = None,
+                              timeout: int = 30, system_prompt: Optional[str] = None) -> str:
         """Claude CLI를 실행하여 프롬프트에 대한 응답을 받아옵니다.
 
         Args:
@@ -188,6 +215,7 @@ class ClaudeCLIController:
             str: 실시간 출력 라인
         """
         # claude CLI는 유효 UUID만 세션 ID로 허용하므로 의미 기반 세션명을 결정적 UUID로 정규화합니다.
+        orig_session_id = session_id  # 디버그 로그용 원본 세션명(에이전트 식별)
         session_id = self._normalize_session_id(session_id)
         extra_args = self._build_extra_args(model, system_prompt)
 
@@ -253,12 +281,14 @@ class ClaudeCLIController:
             if proc is None:
                 raise last_exception or RuntimeError("Failed to start Claude CLI Stream process after retries.")
 
+            collected = []  # 디버그 활동 로그용으로 스트리밍 응답을 누적
             for line in iter(proc.stdout.readline, ''):
+                collected.append(line)
                 yield line
-                
+
             proc.stdout.close()
             proc.wait()
-            
+
             if proc.returncode != 0:
                 err = proc.stderr.read().strip()
                 proc.stderr.close()
@@ -267,11 +297,14 @@ class ClaudeCLIController:
                         self._session_limited = True
                     raise RuntimeError(f"Claude CLI Stream failed: {err}")
             proc.stderr.close()
+            # 정상 완료: 원본 세션명 기준으로 누적 응답을 활동 로그에 기록
+            self._log_activity(orig_session_id, model, prompt, "".join(collected), "ok")
         except Exception as e:
             err_str = str(e)
             if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
                 self._session_limited = True
             logger.error(f"Failed to run Claude CLI Stream: {err_str}")
+            self._log_activity(orig_session_id, model, prompt, err_str, "error")
             raise RuntimeError(f"Failed to run Claude CLI Stream: {err_str}") from e
 
     def is_session_limited(self) -> bool:
