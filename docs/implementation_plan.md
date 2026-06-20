@@ -6,6 +6,43 @@
 
 ---
 
+## 📌 목차 (Table of Contents)
+
+1. [1. 프로젝트 정의](#1-프로젝트-정의)
+2. [2. 확정된 설계 결정 사항](#2-확정된-설계-결정-사항)
+   * [2-1. 시각화 엔진: Mermaid.js + QWebEngineView (로컬 번들링)](#2-1-시각화-엔진-mermaidjs--qwebengineview-로컬-번들링)
+   * [2-2. Claude CLI 세션 분리 및 컨텍스트 병합](#2-2-claude-cli-세션-분리-및-컨텍스트-병합)
+   * [2-3. STT 및 화자 분리](#2-3-stt-및-화자-분리)
+   * [2-4. 최종 보고서 저장](#2-4-최종-보고서-저장)
+3. [3. 시스템 아키텍처](#3-시스템-아키텍처)
+4. [4. 프로젝트 트리 구조](#4-프로젝트-트리-구조)
+5. [5. Phase별 개발 계획 및 ReAct 검증](#5-phase별-개발-계획-및-react-검증)
+   * [Phase 1: Core 인프라 + 시스템 트레이 + 투명 오버레이 GUI](#phase-1-core-인프라--시스템-트레이--투명-오버레이-gui)
+   * [Phase 2: SQLite DB + STT 실시간 엔진 & Mock 에뮬레이터 설계](#phase-2-sqlite-db--stt-실시간-엔진--mock-에뮬레이터-설계)
+   * [Phase 3: Claude CLI 파이프 + Flow Agent + Mermaid 시각화 & 스마트 화면 융합](#phase-3-claude-cli-파이프--flow-agent--mermaid-시각화--스마트-화면-융합)
+   * [Phase 4: Chat Agent + 하이브리드 RAG + 대화창 UI](#phase-4-chat-agent--하이브리드-rag--대화창-ui)
+   * [Phase 4-2: 예외 처리, 통합 최적화 및 융합 데모 (AppCoordinator 연동)](#phase-4-2-예외-처리-통합-최적화-및-융합-데모-appcoordinator-연동)
+   * [Phase 4-3: 추가 최적화 및 설정/환경 고도화 (Settings, Screen DB, CLI Path Override, Local WebFont)](#phase-4-3-추가-최적화-및-설정환경-고도화-settings-screen-db-cli-path-override-local-webfont)
+   * [Phase 5: Report Agent + 최종 보고서 + 통합 최적화](#phase-5-report-agent--최종-보고서--통합-최적화)
+   * [Phase 6: 실제 오픈소스 STT/화자분리 모델 연동 및 실시간 검증](#phase-6-실제-오픈소스-stt화자분리-모델-연동-및-실시간-검증)
+6. [6. AI 바이브 코딩 문서 체계 및 운영 규칙](#6-ai-바이브-코딩-문서-체계-및-운영-규칙)
+7. [7. 검증 계획 요약](#7-검증-계획-요약)
+8. [8. 상세 구현 설계서: Phase 7 & Phase 8](#8-상세-구현-설계서-phase-7--phase-8)
+   * [Phase 7: E2E 통합 하네스, 디버깅 및 예외 하드닝 (E2E 특집)](#phase-7-e2e-통합-하네스-디버깅-및-예외-하드닝-e2e-특집)
+     * [7-1. E2E 통합 테스트 하네스 (tests/e2e_harness.py) 구축](#7-1-e2e-통합-테스트-하네스-testse2e_harnesspy-구축)
+     * [7-2. Claude CLI 에러 하드닝 및 로컬 Fallback(대체) 모드 구현](#7-2-claude-cli-에러-하드닝-및-로컬-fallback대체-모드-구현)
+     * [7-3. WAV 원본 실시간 녹음 및 전사록 텍스트(.txt) 실시간 저장](#7-3-wav-원본-실시간-녹음-및-전사록-텍스트txt-실시간-저장)
+     * [7-4. Flow 에이전트의 증분(Delta) 전사 업데이트 및 히스토리 저장](#7-4-flow-에이전트의-증분delta-전사-업데이트-및-히스토리-저장)
+     * [7-5. I2T 에이전트 (Image-to-Text Agent) 신설 및 캡처 연동](#7-5-i2t-에이전트-image-to-text-agent-신설-및-캡처-연동)
+     * [7-6. 사용자 오인식 교정(Auto-Correction Map) 및 자가 개선 루프](#7-6-사용자-오인식-교정auto-correction-map-및-자가-개선-루프)
+     * [7-7. 실시간 전사 가시성(라이브 자막) 제공](#7-7-실시간-전사-가시성라이브-자막-제공)
+   * [Phase 8: 오프라인 원클릭 패키징 및 가중치 모델 통합 배포 (순연)](#phase-8-오프라인-원클릭-패키징-및-가중치-모델-통합-배포-순연)
+     * [8-1. pyannote 토큰리스 오프라인 로컬 로드 설계 상세](#8-1-pyannote-토큰리스-오프라인-로컬-로드-설계-상세)
+     * [8-2. Portable Python 격리 패키지 구조 설계 상세](#8-2-portable-python-격리-패키지-구조-설계-상세)
+     * [8-3. Inno Setup 인스톨러 빌드 상세](#8-3-inno-setup-인스톨러-빌드-상세)
+
+---
+
 ## 1. 프로젝트 정의
 
 **PrismFlow**는 Windows 시스템 트레이에 상주하면서, 로컬 디바이스에서 회의 음성을 실시간 감지·녹음·전사(STT)하고, 4개의 독립 AI 에이전트(STT · Flow · Chat · Docs)가 유기적으로 협업하여 회의 흐름 시각화, 맥락 기반 Q&A, 최종 회의록 생성을 수행하는 **차세대 AI 회의 어시스턴트**입니다.
@@ -625,7 +662,8 @@ endlocal
 # 앱 통합은 run.bat 수동 E2E + STT_LIVE 옵트인 실측
 ```
 
-> **Phase 7 (배포)** 는 6-3 완료(이중 검증 통과) 이후 착수한다. 완성도 미확보 상태에서 패키징 진입 금지.
+> **Phase 7 (E2E 하드닝)** 은 STT 실엔진 구동 및 Claude CLI 세션 리밋/장애 상황에 대처하기 위한 통합 디버깅 및 예외 처리 고도화 단계이다.
+> **Phase 8 (배포)** 로 오프라인 원클릭 패키징 및 배포 단계를 순연한다.
 
 ---
 
@@ -654,11 +692,84 @@ endlocal
 
 ---
 
-## 8. 향후 로드맵 및 배포 전략 (Phase 6 & Phase 7)
+## 8. 상세 구현 설계서: Phase 7 & Phase 8
 
-### Phase 7: 오프라인 원클릭 패키징 및 가중치 모델 통합 배포
+### Phase 7: E2E 통합 하네스, 디버깅 및 예외 하드닝 (E2E 특집)
 
-#### 7-1. pyannote 토큰리스 오프라인 로컬 로드 설계 상세
+#### 7-1. E2E 통합 테스트 하네스 (`tests/e2e_harness.py`) 구축
+*   **목적**: 음성을 직접 내지 않고도 전체 라이프사이클을 반복 및 자동 시뮬레이션하며, 세션 한도 초과 등 다양한 예외 상황에서의 E2E 흐름을 검출하고 회귀를 방지하기 위함.
+*   **설계 상세**:
+    *   `E2EHarness` 클래스를 통해 가상의 오디오 프레임을 공급(또는 VAD 감지 모크)하여 STT 엔진이 전사 결과(`transcripts`)를 DB에 주기적으로 적재하도록 유도.
+    *   Claude CLI 세션 한도 초과(`Exit Code 1: You've hit your session limit`), API 키 미설정, 네트워크 끊김 등의 장애 조건을 주입할 수 있는 스텁 환경 구성.
+    *   회의 시작 ➔ 실시간 STT ➔ Flow 다이어그램 갱신 ➔ Chat Q&A ➔ 회의 종료 ➔ 보고서 생성 및 실행에 이르는 전 프로세스를 10초 이내의 빠른 주기로 구동 및 검증하는 하네스 루프 스크립트.
+
+#### 7-2. Claude CLI 에러 하드닝 및 로컬 Fallback(대체) 모드 구현
+*   **배경**: Claude CLI가 세션 한도 초과나 네트워크 단절로 에러(Exit Code 1)를 낼 때, 앱이 크래시되거나 비정상 종료되는 현상을 막고, 제한 상황 하에서도 정상적으로 회의록을 생성 및 저장할 수 있는 안전장치 마련.
+*   **설계 상세**:
+    *   `cli_controller.py`에서 CLI 실행 실패 시 단순히 `RuntimeError`를 던지기 전에 stderr를 분석하여 세션 리밋(`You've hit your session limit`) 여부를 식별.
+    *   **Fallback CLI Runner** 탑재: 세션 리밋 감지 시, 전역 설정(`AppConfig`) 혹은 세션 상태에 경고 플래그를 세우고 UI(상태바/QMessageBox)를 통해 사용자에게 경고 표출.
+    *   **대체 응답 생성기(Fallback Generator)** 구현:
+        *   **FlowAgent Fallback**: 전사된 발화록을 바탕으로 Mermaid 다이어그램 코드를 파이썬 내에서 규칙 기반(예: 화자 간 단순 발화 순서 시퀀스 차트)으로 생성하여 렌더링 유지.
+        *   **ChatAgent Fallback**: 사용자의 채팅 입력 시 "현재 Claude CLI 사용량 한도에 도달하여 로컬 가상 비서 모드로 동작 중입니다. 최근 발화 요약: ..."와 같은 중립 응답 및 발화록에 기반한 로컬 매칭 답변 반환.
+        *   **ReportAgent Fallback**: Opus 호출이 불가능할 경우, SQLite DB에서 읽어온 발화 내역을 시간/화자별로 정렬하여 깔끔한 정적 Markdown 텍스트 회의록으로 조합하고, `Documents/PrismFlow/Reports/` 경로에 자동 저장 후 로컬 뷰어로 오픈.
+
+#### 7-3. WAV 원본 실시간 녹음 및 전사록 텍스트(.txt) 실시간 저장
+*   **배경**: 법적/보안적 이유나 회의 아카이빙을 위해 원본 음성 데이터와 정적 텍스트 전사록을 디렉토리에 영구 보존해야 함.
+*   **설계 상세**:
+    *   **원본 음성 실시간 파일 저장**:
+        *   회의 시작 시 `Documents/PrismFlow/Recordings/YYYY-MM-DD/meeting_{session_id}.wav` 파일을 생성.
+        *   `AudioCapture`가 캡처하는 16kHz/Mono/Float32 오디오 스트림 전체를 VAD 분절 여부와 상관없이 백그라운드 스레드에서 `wave` 모듈을 이용해 실시간으로 WAV 파일에 계속해서 이어붙여 저장.
+    *   **정적 전사록 실시간/종료 시 저장**:
+        *   `Documents/PrismFlow/Transcripts/YYYY-MM-DD/transcript_{session_id}.txt` 생성.
+        *   새로운 전사가 완료될 때마다 `[HH:MM:SS] [Speaker_XX]: 전사 텍스트` 형식으로 포맷팅하여 TXT 파일에 추가(UTF-8). 회의 종료 시 최종 플러시 수행.
+
+#### 7-4. Flow 에이전트의 증분(Delta) 전사 업데이트 및 히스토리 저장
+*   **배경**: 30초마다 전체 전사록을 다시 Claude CLI에 전달하면 입력 토큰량 누적으로 인해 하이쿠(Haiku) 모델임에도 성능 및 속도 지연(latency)이 심각해짐.
+*   **설계 상세**:
+    *   **증분 전사 업데이트 (Delta Context)**:
+        *   `cli_controller.py`의 세션 재개(`--resume <UUID>`) 기능을 적극 활용.
+        *   `FlowAgent`는 이전 30초 루프에서 마지막으로 읽은 전사록의 ID(또는 타임스탬프)를 저장.
+        *   30초 주기 업데이트 시, 새로 누적된 **신규 전사록만** 추출하여 해당 세션의 컨텍스트에 추가 주입 프롬프트로 전달.
+        *   **프롬프트 규칙**:
+            *   `"이전 다이어그램을 바탕으로, 다음 추가된 대화 내용을 반영하여 Mermaid 다이어그램 코드의 내부를 업데이트하라: [추가된 30초분 텍스트]"`
+            *   **이미지 맥락 통합**: 만약 I2T Agent에 의해 추출된 화면 텍스트 맥락(배경 정보)이 있다면, 프롬프트에 동적 삽입하여 해당 자료/이미지 맥락에 핵심적인 중요도를 부여해 다이어그램 노드에 반영되도록 유도.
+            *   **신규 다이어그램 분기**: 대화의 흐름이나 주제 전환이 감지될 경우, 이전 구조도에서 이어붙이지 않고 다이어그램을 완전히 새로 교체하여 생성하도록 프롬프트 지시자 탑재.
+    *   **구조도 히스토리(Flow History) 저장**:
+        *   회의 주제 전환이나 대화 진행에 따라 다이어그램의 흐름이 변하므로, 유의미한 Mermaid 코드가 갱신될 때마다 타임스탬프와 함께 DB `flow_history` 테이블에 영구 저장.
+        *   최종 리포트(.md) 컴파일 시 시간대별 흐름 변천사를 다중 섹션으로 포함하여 히스토리를 보존.
+
+#### 7-5. I2T 에이전트 (Image-to-Text Agent) 신설 및 캡처 연동
+*   **배경**: 화면 캡처(회의 발표 자료 등) 이미지 처리를 Flow Agent 루프와 결합하면 대기 시간이 과도하게 늘어남. 따라서 이미지를 텍스트 맥락으로 변환하는 독립된 `I2T Agent`를 구축하여 비동기로 화면 자료 정보를 DB에 정규화해 추출.
+*   **설계 상세**:
+    *   **비동기 이미지 텍스트 변환**:
+        *   `ScreenTransitionDetector`에 의해 슬라이드 전환/화면 변화가 감지되어 새로운 이미지가 캡처되면, `I2TAgent`가 비동기 백그라운드 태스크로 구동됨.
+        *   Claude CLI 멀티모달 입력 방식을 활용해 캡처 이미지 파일을 로컬 인자로 첨부하여 분석 지시. (예: `claude -p "이 발표 자료 슬라이드 이미지에서 핵심 의제, 핵심 단어, 표/텍스트 콘텐츠를 요약 추출하라" C:\path\to\captured.png`)
+        *   추출된 텍스트 결과는 SQLite DB의 `screen_context` 테이블에 영구 적재.
+    *   **추출 결과의 활용**:
+        *   **교정 힌트 자동 주입**: 이미지에서 추출된 고유 대명사, 프로젝트 전문 용어들을 **사용자 정의 오인식 교정 사전(Auto-Correction Map)**의 정합성 향상을 위한 보정 힌트 리스트로 자동 추가.
+        *   **Flow Agent 맥락 주입**: Flow Agent가 30초 주기로 전사록을 보낼 때, DB에서 읽은 최신 화면 텍스트 요약본을 배경 정보(Image Context Context)로 결합하여 프롬프트 품질 극대화.
+
+#### 7-6. 사용자 오인식 교정(Auto-Correction Map) 및 자가 개선 루프
+*   **배경**: 로컬 CPU/iGPU 사양 한계로 인해 딥러닝 Whisper/pyannote 가중치 모델 자체를 파인튜닝하는 자가 학습 루프는 실시간 구동이 불가능함. 대신 사용자가 UI에서 오인식 단어 및 화자명을 교정한 내역을 기반으로 학습/치환하는 실질적인 로컬 개선 루프를 구현.
+*   **설계 상세**:
+    *   **사용자 정의 교정 사전 (Custom Correction Dictionary)**:
+        *   SQLite DB에 `correction_dictionary` 테이블 신설 (`pattern` -> `replacement`).
+        *   사용자가 채팅창이나 리포트 피드백에서 오인식 단어(예: `"프리즘프로"` ➔ `"프리즘플로우"`)를 정정하면 DB 사전에 자동 등록.
+        *   이후 STT 추론 결과물 텍스트가 확정되어 DB에 인서트되기 전에, 정규식을 이용하여 등록된 패턴들을 매칭해 실시간 교정 치환을 거친 뒤 DB에 영구 적재. (I2T Agent에 의해 수집된 슬라이드 키워드 리스트를 참조하여 오인식 유추 정밀도 향상).
+    *   **화자 프로필 캐시 매핑**:
+        *   특정 전역 화자(`Speaker_01` 등)의 실제 이름(예: `"홍길동 과장"`)을 사용자가 입력하면, 세션이 전환되어도 해당 화자의 고유 임베딩 벡터와 연동하여 자동으로 이름 매핑을 유지하는 프로필 캐시 레이어 구현.
+
+#### 7-7. 실시간 전사 가시성(라이브 자막) 제공
+*   **배경**: 실시간 전사 동작 여부가 시각적으로 보이지 않아 사용자가 오인하는 것을 방지하기 위해 `FlowUI` 하단 혹은 오버레이 창 영역에 실시간 자막 프리뷰 연동.
+*   **설계 상세**:
+    *   `FlowUI` 하단의 빈 영역 또는 툴팁 자막바에 최근 감지된 3개의 `(화자: 전사내용)` 자막을 스크롤하여 노출.
+    *   `MeetingContext`에서 신규 발화 추가 시 이벤트를 수신하여 UI에 즉시 반영.
+
+---
+
+### Phase 8: 오프라인 원클릭 패키징 및 가중치 모델 통합 배포 (순연)
+
+#### 8-1. pyannote 토큰리스 오프라인 로컬 로드 설계 상세
 *   **원리**: pyannote 파이프라인이 기동 시 huggingface.co 허브를 참조하지 않도록, 허브의 `config.yaml` 설정을 로컬 리소스 디렉토리(`prismflow/resources/models/diarization/config.yaml`)에 고정 패키징하여 로컬 파일 경로를 직접 전달합니다.
 *   **환경 변수 제어**:
     *   `os.environ["HF_HUB_OFFLINE"] = "1"` 설정을 활성화하여 모든 허깅페이스 서버 HEAD/GET API 접속 시도를 강제로 차단하고 오프라인 구동을 보장합니다.
@@ -666,7 +777,7 @@ endlocal
 *   **로컬 캐시 이식**: 
     *   이미 개발 계정으로 동의 완료되어 캐싱된 모델 디렉토리 3종(`models--pyannote--segmentation-3.0`, `models--pyannote--speaker-diarization-3.1`, `models--pyannote--wespeaker-voxceleb-resnet34-LM`)을 개발자 PC의 `~/.cache/huggingface/hub/` 경로에서 통째로 추출하여 `prismflow/resources/models/hf_cache/hub/` 경로로 복사 및 패키징합니다.
 
-#### 7-2. Portable Python 격리 패키지 구조 설계 상세
+#### 8-2. Portable Python 격리 패키지 구조 설계 상세
 *   **이유**: PyInstaller 단일 파일 빌드는 기동 시 수 기가바이트(PyTorch, OpenVINO 등)의 압축 해제 오버헤드로 인해 Windows에서 극심한 기동 지연(10초 이상)과 임시 폴더 리소스 누수를 일으킵니다. 이를 극복하기 위해 압축 해제 지연이 없는 **Portable Python (Python Embeddable Package)** 구조를 설계합니다.
 *   **디렉토리 트리 구성**:
     ```text
@@ -688,7 +799,7 @@ endlocal
     *   임베디드 파이썬 패키지의 `python311._pth` 파일을 수정하여 `./site-packages`와 `./`를 sys.path 검색 경로에 추가합니다.
     *   이를 통해 엔드유저 환경에 Python이나 환경변수가 없어도, Portable 폴더 내부의 격리된 런타임 및 가중치로 100% 즉시 오프라인 구동됩니다.
 
-#### 7-3. Inno Setup 인스톨러 빌드 상세
+#### 8-3. Inno Setup 인스톨러 빌드 상세
 *   Inno Setup 스크립트(`setup.iss`)를 구성하여 Portable 폴더 트리 전체(모델 가중치 포함 약 3GB 내외)를 고도로 압축해 단일 설치 본(`PrismFlow_Setup_v1.0.exe`)으로 빌드합니다.
 *   설치 시 바탕화면/시작프로그램 바로가기 아이콘 생성, 자동 경로 셋업, 마이크 및 하드웨어 가속 적합성 검사를 내장합니다.
 
