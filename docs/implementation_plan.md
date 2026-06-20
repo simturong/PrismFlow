@@ -443,18 +443,96 @@ E:\Tak\Gemini\PrismFlow\
 
 ---
 
-### Phase 5: Docs Agent + 최종 보고서 + 통합 최적화
+### Phase 5: Synthesizer Agent (구 Docs Agent) + 최종 보고서 + 통합 최적화
 
 #### 개발 범위
 | 대상 파일 | 작업 내용 |
 |:---|:---|
-| `prismflow/agents/docs/docs_agent.py` | 전체 STT + 최종 Flow + Chat 이력 → Claude Opus → Markdown 컴파일 |
-| `run.bat` | 가상환경 활성화 + `python main.py` 원클릭 실행 |
-| `tests/test_docs.py` | Markdown 리포트 생성 검증, 파일 저장 경로 확인 |
+| `prismflow/agents/docs/__init__.py` [NEW] | SynthesizerAgent 모듈 진입점 제공 |
+| `prismflow/agents/docs/docs_agent.py` [NEW] | `SynthesizerAgent` (QObject) 및 `SynthesizerWorker` (QThread) 구현:<br/>- `signals.meeting_ended` 구독 및 세션 종료 자동 감지<br/>- SQLite DB에서 회의 정보, 전체 발화록(`transcripts`), 채팅 히스토리(`chat_logs`) 추출<br/>- `MeetingContext`에서 최종 Mermaid 흐름도 추출<br/>- Claude Opus (`claude-3-opus-20240229`)용 단발 프롬프트 구성 및 비동기 CLI 호출<br/>- Markdown 포맷 회의록 컴파일 (회의 요약 + 아젠다 쟁점 + 최종 Mermaid 소스 + Todo 리스트)<br/>- `%USERPROFILE%\Documents\PrismFlow\Reports\YYYY-MM-DD\` 경로 하위에 `report_{session_id}.md` 파일 실시간 저장<br/>- SQLite `meeting_sessions.summary` 컬럼에 보고서 본문 영구 저장 업데이트<br/>- `os.startfile`을 이용한 Windows 기본 연결 프로그램 자동 실행 및 타 플랫폼 예외 방어 |
+| `main.py` | `AppCoordinator`에 `SynthesizerAgent` 인스턴스 연동 및 `signals.meeting_ended` 발생 시 보고서 컴파일 흐름 연결 |
+| `run.bat` [NEW] | Windows 원클릭 통합 실행 스크립트 작성 (가상환경 활성화 및 `python main.py` 실행) |
+| `tests/test_docs.py` [NEW] | SynthesizerAgent 최종 보고서 생성 검증:<br/>- SQLite DB 적재 데이터 및 최종 Mermaid 코드가 올바르게 병합된 프롬프트 구성 확인<br/>- `ClaudeCLIController` Mocking을 통한 Claude Opus 응답 생성 검증<br/>- 임시 디렉토리 하위의 `YYYY-MM-DD` 날짜별 폴더 구조 생성 및 Markdown 파일 인코딩(UTF-8) 저장 검증<br/>- DB의 `meeting_sessions` 테이블 내 `summary` 필드 업데이트 여부 확인<br/>- `os.startfile` 모크 호출 횟수 및 인자 검증 |
+
+#### 상세 기술 설계 명세
+
+##### 1. Synthesizer Agent 데이터 융합 및 비동기 생성 스레드 (`docs_agent.py`)
+- **회의 종료 감지 및 스레드 가동**:
+  - `SynthesizerAgent`는 `MeetingContext` 인스턴스의 `signals.meeting_ended` 시그널에 `_on_meeting_ended` 메소드를 바인딩합니다.
+  - 해당 시그널이 도달하면 전달받은 `session_id`를 기반으로 `SynthesizerWorker` (QThread) 인스턴스를 동적으로 생성 및 시작하여 백그라운드에서 보고서를 생성하도록 합니다. 이를 통해 회의 종료 시 발생할 수 있는 UI 스레드 멈춤 현상을 원천 방지합니다.
+- **SQLite DB 데이터 수집**:
+  - `SynthesizerWorker` 내에서 `db_manager.get_session(session_id)`를 호출해 회의 메타데이터(회의 제목 `title`, 시작 시간 `start_time`, 종료 시간 `end_time`)를 로드합니다.
+  - `db_manager.get_transcripts(session_id)`를 통해 회의 시작부터 종료까지 누적된 모든 화자별 발화 목록을 가져옵니다.
+  - `db_manager.get_chat_logs(session_id)`를 통해 회의 중 사용자와 어시스턴트 사이에 주고받은 Q&A 채팅 로그 목록을 로드합니다.
+  - `context.current_mermaid_code`를 읽어 최종 시각화 Mermaid 흐름도를 가져옵니다.
+- **Claude Opus 정밀 보고서 프롬프트 설계**:
+  - 수집된 모든 자료를 유기적으로 조합하여 하나의 컨텍스트로 구성하고, Claude Opus (`claude-3-opus-20240229`) 모델에 전달할 프롬프트를 빌드합니다.
+  - **프롬프트 템플릿 구조**:
+    ```text
+    [시스템 역할]
+    당신은 PrismFlow 프로젝트의 전문 회의 기록관 및 비즈니스 분석가(Synthesizer)입니다. 제공된 회의 컨텍스트(STT 발화문, 채팅 히스토리, Mermaid 흐름도)를 정밀 분석하여 임원진 보고용 고품질 Markdown 회의록을 작성하십시오.
+
+    [회의 기본 정보]
+    - 세션 ID: {session_id}
+    - 회의 제목: {title}
+    - 일시: {start_time} ~ {end_time}
+
+    [최종 Mermaid 흐름도]
+    {mermaid_code}
+
+    [회의 중 질의응답 (Chat Logs)]
+    {chat_logs}
+
+    [전체 STT 전사록]
+    {transcripts}
+
+    [작성 규칙 및 구조 가이드라인]
+    1. 회의 요약: 회의의 목적, 주요 의제, 핵심 결론 및 합의 내용을 3-4문장으로 명확히 정리하십시오.
+    2. 아젠다별 쟁점: 각 세부 아젠다별로 의견이 엇갈렸던 쟁점 사항, 대립된 의견의 흐름, 그리고 최종적으로 합의된 솔루션을 구체적으로 작성하십시오.
+    3. 최종 Mermaid 소스: 회의 중 도출된 최종 Mermaid 코드를 코드 블록(```mermaid) 안에 그대로 온전히 포함시키십시오.
+    4. Todo 리스트: 회의에서 결정된 향후 작업 항목(Action Item), 담당자, 그리고 언급된 마감 기한을 명확한 리스트 포맷으로 추출하십시오.
+    5. 서론, 결론, 혹은 "알겠습니다. 작성해 드리겠습니다"와 같은 AI의 불필요한 메타 설명 문구는 제외하고, 오직 순수한 Markdown 내용만 반환하십시오.
+    ```
+- **Claude CLI 단발 실행**:
+  - `cli_controller.execute_command(prompt, session_id, model="claude-3-opus-20240229", timeout=120)`를 수행합니다. 
+  - Opus 모델 특성상 긴 회의록의 경우 추론 시간이 오래 소요될 수 있으므로 타임아웃 값을 120초로 넉넉하게 지정합니다.
+- **날짜별 폴더 구조 저장 및 DB 동기화**:
+  - 오늘 날짜에 해당하는 `YYYY-MM-DD` 형식의 폴더를 `%USERPROFILE%\Documents\PrismFlow\Reports\` 하위에 생성합니다. (예: `C:\Users\sando\Documents\PrismFlow\Reports\2026-06-20\`)
+  - 생성된 폴더 내에 `report_{session_id}.md` 형태로 파일명을 구성하고, UTF-8 인코딩으로 마크다운 파일을 기록합니다.
+  - 파일 저장이 정상적으로 끝나면, SQLite 데이터베이스의 `meeting_sessions` 테이블에서 해당 `session_id` 레코드의 `summary` 컬럼에 생성된 Markdown 보고서 텍스트 전체를 업데이트합니다. (`db_manager.end_session(session_id, end_time=original_end_time, summary=report_content)` 호출)
+- **Windows 연결 프로그램 연동**:
+  - 파일 생성이 완료되면 `os.startfile(report_filepath)`를 실행하여, 사용자의 Windows 시스템에 기본값으로 지정된 마크다운 뷰어 또는 텍스트 편집기로 문서를 즉시 띄웁니다.
+  - 단위 테스트 환경이나 Windows 이외의 플랫폼(예: macOS, Linux)에서는 `os.startfile`이 존재하지 않아 예외가 발생하므로, `sys.platform == 'win32'` 및 `hasattr(os, 'startfile')` 가드가 포함되도록 예외 방어 처리를 합니다.
+
+##### 2. Windows 원클릭 실행 런처 (`run.bat`)
+- 가상환경의 활성화 여부를 자동으로 판단하고 애플리케이션 진입점 `main.py`를 원클릭 실행할 수 있는 배치 스크립트를 작성합니다.
+```batch
+@echo off
+title PrismFlow - AI Meeting Assistant
+cd /d "%~dp0"
+
+echo [PrismFlow] Activating virtual environment...
+if exist ".venv\Scripts\activate.bat" (
+    call .venv\Scripts\activate.bat
+) else (
+    echo [ERROR] Virtual environment (.venv) not found. Please run setup first.
+    pause
+    exit /b 1
+)
+
+echo [PrismFlow] Launching application...
+python main.py
+if %errorlevel% neq 0 (
+    echo [ERROR] Application exited with error code %errorlevel%.
+    pause
+)
+endlocal
+```
 
 #### ReAct 검증
 ```bash
 .venv\Scripts\python -m pytest tests/test_docs.py -v
+.venv\Scripts\python -m pytest tests/ -v
 ```
 
 ---
@@ -481,3 +559,31 @@ E:\Tak\Gemini\PrismFlow\
 - 듀얼 모니터 드래그/스냅 동작 확인
 - 실제 마이크 입력을 통한 로컬 Faster-Whisper 응답성 점검
 - 회의 종료 → Docs 리포트 자동 생성 및 기본 뷰어 실행 확인
+
+---
+
+## 8. 향후 로드맵 및 배포 전략 (Phase 6 & Phase 7)
+
+### Phase 6: 실제 오픈소스 모델 연동 및 실시간 검증
+- **개발 내용**:
+  - `prismflow/agents/stt/stt_agent.py` 내의 `_load_openvino_models` 및 `_process_inference` 파이프라인 실제 구현.
+  - `openvino-genai` 기반의 Stateful Whisper와 `pyannote-openvino` ONNX 런타임 추론 엔진 탑재.
+  - `stt_mock_mode = False` 설정 시 실제 마이크 수집 오디오 데이터를 통한 실시간 전사 및 화자 분리 연동성 검사.
+  - 실시간 마이크 수집 시 발생하는 노이즈, 버퍼 병목, CPU/GPU 하드웨어 가속 강제 제어 시의 오류 해결 및 실사용 예외 차단.
+
+### Phase 7: 오프라인 원클릭 패키징 및 가중치 모델 통합 배포
+- **배포 챌린지**: 
+  - 폐쇄망(오프라인) 환경에서 사용자가 즉시 사용할 수 있도록 **가상환경, 실행파일, 그리고 1GB~3GB에 달하는 STT/Diarization 모델 가중치를 하나로 묶어 제공**해야 합니다.
+  - OS 전역에 Python이나 CUDA Toolkit, OpenVINO 런타임이 설치되어 있지 않더라도 격리되어 실행되도록 보장하는 것이 핵심입니다.
+- **제안하는 배포 아키텍처 (Portable Bundle + 인스톨러)**:
+  - **1단계: Python Embeddable 격리 배포**:
+    - `PyInstaller`를 통한 단일 `.exe` 빌드는 실행 시 임시 폴더(`_MEIPASS`)에 수십만 개의 라이브러리 파일을 매번 압축 해제하므로 앱 기동 지연(5초~10초)이 심각하고 가상환경 리소스 누수가 잦습니다.
+    - 대신 프로젝트 디렉토리에 **Embeddable Python**과 고정된 `.venv` 라이브러리 풀을 통째로 포함시키는 **Portable 폴더 패키지** 구조를 지향합니다.
+    - 메인 실행은 `run.bat` 스크립트를 C++ 또는 C#으로 가볍게 컴파일한 경량 런처 `.exe` 파일로 래핑하여 사용자가 일반 설치 앱처럼 클릭하여 바로 실행할 수 있도록 합니다.
+  - **2단계: 모델 가중치 로컬 번들링**:
+    - Whisper 및 Pyannote 가중치 파일들을 프로그램 폴더 내부의 `prismflow/resources/models/` 경로에 패키징하여 배포 파일에 직접 포함시킵니다.
+    - 코드의 `AppConfig`가 기동 시 로컬 패키지 내부의 상대 경로에서 가중치를 최우선 탐색하도록 설계하여 허깅페이스 다운로드 시도를 원천 차단하고 오프라인 환경을 강제합니다.
+  - **3단계: Inno Setup 기반 통합 설치 파일 빌드**:
+    - Portable 폴더 전체와 모델 가중치 파일들을 압축률이 뛰어난 **Inno Setup** 또는 **NSIS** 도구를 사용해 하나의 Windows용 설치 파일(`PrismFlow_Setup_v1.0.exe`)로 컴파일합니다.
+    - 설치 프로그램 실행 시 바탕화면에 바로가기 아이콘을 만들고, 모델 가중치를 안정적으로 풀고 패키징 폴더를 구성하게 합니다.
+
