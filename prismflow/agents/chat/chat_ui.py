@@ -82,35 +82,15 @@ class ChatUI(TranslucentOverlay):
         self.init_ui()
         self.setup_connections()
         
-    def paintEvent(self, event):
-        # TranslucentOverlay에서 그리는 배경 단색 사각형을 방지하고 QFrame 스타일시트로 처리합니다.
-        QWidget.paintEvent(self, event)
-        
     def init_ui(self):
-        # 1. 메인 레이아웃 및 프레임 구조
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.container = QFrame(self)
-        self.container.setObjectName("chat-container")
-        self.container.setStyleSheet("""
-            #chat-container {
-                background-color: rgba(25, 25, 30, 215);
-                border: 1px solid qlineargradient(x1:0, y1:0, x2:1, y2:1, 
-                    stop:0 rgba(255, 255, 255, 0.22), 
-                    stop:1 rgba(255, 255, 255, 0.05));
-                border-radius: 14px;
-            }
-        """)
-        
-        # 2. 내부 레이아웃
-        layout = QVBoxLayout(self.container)
+        # 1. 메인 레이아웃
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 32, 12, 12)
         layout.setSpacing(8)
         
-        # 3. 상단 타이틀바
+        # 2. 상단 타이틀바
         title_layout = QHBoxLayout()
-        self.title_label = QLabel("PrismFlow Assistant", self.container)
+        self.title_label = QLabel("PrismFlow Assistant", self)
         self.title_label.setStyleSheet("""
             color: #ffffff;
             font-weight: bold;
@@ -123,8 +103,8 @@ class ChatUI(TranslucentOverlay):
         title_layout.addStretch()
         layout.addLayout(title_layout)
         
-        # 4. 중앙 대화 히스토리 (QTextBrowser)
-        self.chat_history = QTextBrowser(self.container)
+        # 3. 중앙 대화 히스토리 (QTextBrowser)
+        self.chat_history = QTextBrowser(self)
         self.chat_history.setOpenExternalLinks(True)
         self.chat_history.setStyleSheet("""
             QTextBrowser {
@@ -156,8 +136,8 @@ class ChatUI(TranslucentOverlay):
         """)
         layout.addWidget(self.chat_history)
         
-        # 5. 로딩 표시기 ('Claude가 생각하는 중...' 레이블)
-        self.loading_label = QLabel("Claude가 답변을 작성하고 있습니다...", self.container)
+        # 4. 로딩 표시기 ('Claude가 생각하는 중...' 레이블)
+        self.loading_label = QLabel("Claude가 답변을 작성하고 있습니다...", self)
         self.loading_label.setStyleSheet("""
             color: #a78bfa;
             font-size: 11px;
@@ -181,8 +161,8 @@ class ChatUI(TranslucentOverlay):
         
         layout.addWidget(self.loading_label)
         
-        # 6. 하단 텍스트 입력창
-        self.input_field = QLineEdit(self.container)
+        # 5. 하단 텍스트 입력창
+        self.input_field = QLineEdit(self)
         self.input_field.setPlaceholderText("세션 초기화 중... 잠시만 기다려주세요.")
         self.input_field.setEnabled(False)
         self.input_field.setStyleSheet("""
@@ -201,8 +181,6 @@ class ChatUI(TranslucentOverlay):
         """)
         self.input_field.returnPressed.connect(self.send_query)
         layout.addWidget(self.input_field)
-        
-        main_layout.addWidget(self.container)
         
         # 시스템 초기화 메시지
         self.append_message("System", "AI 챗 세션을 준비하고 있습니다...")
