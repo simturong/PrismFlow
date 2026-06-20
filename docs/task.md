@@ -95,8 +95,20 @@
 
 ## Phase 6-3: 완성도 확보 (실엔진 앱 통합 · 하드닝 · 이중 검증) — ⏳ 승인 대기
 > Phase 7(배포) 진입 전 완성도 확보 단계. 남은 작업 전부를 묶음. 완료 기준 = ①에이전트 앱 통합 실측 ②사용자 실회의 검증 ③버그/사용성 개선 반영.
-- [ ] 6-3-1 설정 UI ↔ 실엔진 배선: `AppConfig` DB 오버라이드를 STT 설정(stt_mock_mode/whisper_model_name/stt_device/vad_threshold)까지 확장 + `SettingsDialog`에 Mock 토글·HF 토큰 필드 추가, 가속 옵션 실디바이스 정합, 모델크기↔OV 디렉토리 매핑
-- [ ] 6-3-2 앱 통합 실측(에이전트): `stt_mock_mode=False`로 run.bat 풀 구동 — 실음성→전사→Flow→Chat→종료→보고서 육안 검증 + 버그 즉시 수정
+- [x] 6-3-1 설정 UI ↔ 실엔진 배선: `AppConfig` DB 오버라이드를 STT 설정(stt_mock_mode/whisper_model_name/stt_device/vad_threshold)까지 확장 + `SettingsDialog`에 Mock 토글·HF 토큰 필드 추가, 가속 옵션 실디바이스 정합, 모델크기↔OV 디렉토리 매핑
+  - [x] config 측: `AppConfig._apply_db_settings`로 stt_mock_mode/whisper_model_size→OV dir/hardware_acceleration→stt_device/vad_threshold/hf_token DB 오버라이드 + 매핑 단일정본 `AppConfig.whisper_dir_name()`
+  - [x] `settings_ui.py`: ① Mock 모드 QCheckBox ② HF 토큰 Password 필드(저장 시 DB+`os.environ["HF_TOKEN"]`) ③ 가속 콤보 `AUTO/GPU/NPU/CPU` 정합(레거시 CPU/CUDA/OpenVINO 값은 AUTO 폴백) ④ 모델크기↔로컬 OV 디렉토리 존재 표시 라벨 ⑤ 저장 시 stt_mock_mode/whisper_model_name/stt_device/vad_threshold/hf_token AppConfig 실시간 반영
+  - [x] 단위테스트: `test_core.py`(STT DB 오버라이드·가속 폴백·매핑 헬퍼) + 신설 `test_ui.py`(SettingsDialog 저장/로드 라운드트립·레거시 가속 폴백). 전체 `pytest tests/` → 46 passed, 1 skipped
+  - 주의: 실엔진은 회의 시작마다 `RealTimeEngineWorker()`가 `AppConfig.load_default()`로 DB값 재로드 → DB 영속화가 실제 배선 경로(in-memory 반영은 동일 config 객체 한정)
+- [/] 6-3-2 앱 통합 실측(에이전트): `stt_mock_mode=False`로 run.bat 풀 구동 — 실음성→전사→Flow→Chat→종료→보고서 육안 검증 + 버그 즉시 수정
+  - [x] 사전점검(자율): `import main`+settings_ui+stt_agent 무결, 트레이 **설정**→`SettingsDialog` 도달성, 실모델 디렉토리 존재(`whisper-small-int8-ov`), 배선 진입 가능 확인
+  - [x] 라이브 E2E 1차 성공(2026-06-20 21:44~21:46, 사용자 실측): 실Whisper 한국어 전사→context(transcript 9건)→Flow 다이어그램→Chat(전사맥락 반영)→종료→보고서 자동생성·열림. **전 구간 실엔진 동작 확인**.
+  - 발견 이슈(후속 단계로 분배):
+    - [ ] 🐛(높음) 콜드스타트 블라인드 윈도우: `_run_real_loop`이 모델 로드(Whisper+pyannote, HF 온라인 체크 ~10-30s) 완료 *후*에 AudioCapture 시작 → 초기 발화 유실. → **6-3-4**: 마이크 캡처를 로드와 병행/선행 + 버퍼링 + "엔진 준비 중" 표시
+    - [ ] 🐛(높음) 실시간 전사 가시성 부재: 라이브 자막 없음 → STT가 30초 Flow/보고서로만 드러나 "미작동" 오인. → **6-3-4/6-3-5**: 경량 실시간 전사 표시 검토
+    - [ ] ⚠️(중) 화자분리 온라인 의존(오프라인 배포 위배): 기동 시 pyannote가 huggingface.co HEAD 요청(diarization-3.1/segmentation-3.0/community-1/wespeaker). → **Phase 7** 토큰리스 오프라인 로컬 로드로 해결(plan 반영)
+    - [ ] ⚠️(중) 단일화자만 테스트 → 전역 일관성(6-3-3) 미평가. 다인 재검 필요(6-3-5)
+    - [ ] 🐛(낮음) `QFont::setPointSize: Point size <= 0 (-1)` 폰트 폴백 경고. → **6-3-6** 정리
 - [ ] 6-3-3 멀티 화자 전역 일관성: 발화 임베딩 점증 클러스터링/코사인 매칭으로 전역 Speaker_XX 라벨 일관성 확보
 - [ ] 6-3-4 첫 실행 UX·에러 하드닝: 모델 미존재 안내/다운로드 상태, STT 실패 UI 토스트+Mock 폴백, 토큰 부재 안내
 - [ ] 6-3-5 이중 검증·개선 루프: 사용자 실회의(다인) 테스트 → 정확도/화자/지연/사용성 피드백 반영, vad/모델 튜닝

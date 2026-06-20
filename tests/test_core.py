@@ -161,3 +161,41 @@ def test_config_db_override(tmp_path):
     # DB에 저장되어 있던 값이 config.claude_cli_cmd에 성공적으로 주입(오버라이드)되었는지 확인
     assert config.claude_cli_cmd == "C:\\custom\\path\\to\\claude.exe"
 
+
+def test_whisper_dir_name():
+    """모델 크기 → OpenVINO 디렉토리명 매핑이 단일 규칙으로 동작하는지 검증"""
+    assert AppConfig.whisper_dir_name("small") == "whisper-small-int8-ov"
+    assert AppConfig.whisper_dir_name("large-v3") == "whisper-large-v3-int8-ov"
+
+
+def test_config_db_override_stt(tmp_path):
+    """설정 UI가 저장하는 STT 키들이 AppConfig 실엔진 설정으로 정상 오버라이드되는지 검증"""
+    db_file = tmp_path / "test_stt_override.db"
+
+    db_manager = DatabaseManager(str(db_file))
+    db_manager.set_setting("stt_mock_mode", "false")
+    db_manager.set_setting("whisper_model_size", "medium")
+    db_manager.set_setting("hardware_acceleration", "GPU")
+    db_manager.set_setting("vad_threshold", "0.7")
+    db_manager.set_setting("hf_token", "hf_unit_test_token")
+
+    config = AppConfig(db_path=str(db_file))
+
+    assert config.stt_mock_mode is False
+    assert config.whisper_model_name == "whisper-medium-int8-ov"
+    assert config.stt_device == "GPU"
+    assert config.vad_threshold == 0.7
+    assert config.hf_token == "hf_unit_test_token"
+
+
+def test_config_db_override_accel_invalid(tmp_path):
+    """알 수 없는 가속 옵션이 저장돼 있으면 안전하게 AUTO로 폴백하는지 검증"""
+    db_file = tmp_path / "test_accel_override.db"
+
+    db_manager = DatabaseManager(str(db_file))
+    # 구버전 UI가 남겼을 수 있는 비호환 값(예: CUDA/OpenVINO)
+    db_manager.set_setting("hardware_acceleration", "CUDA")
+
+    config = AppConfig(db_path=str(db_file))
+    assert config.stt_device == "AUTO"
+

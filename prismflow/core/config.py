@@ -74,10 +74,19 @@ class AppConfig:
             self.stt_device = accel if accel in ("AUTO", "GPU", "NPU", "CPU") else "AUTO"
         # Whisper 모델 크기 → 로컬 OV 모델 디렉토리명
         if s.get("whisper_model_size"):
-            self.whisper_model_name = f"whisper-{s['whisper_model_size']}-int8-ov"
+            self.whisper_model_name = self.whisper_dir_name(s["whisper_model_size"])
         # HF 토큰(설정 UI 저장분 우선, 없으면 __init__의 환경변수 기본값 유지)
         if s.get("hf_token"):
             self.hf_token = s["hf_token"]
+
+    @staticmethod
+    def whisper_dir_name(model_size: str) -> str:
+        """Whisper 모델 크기 선택값(tiny/base/small/medium/large-v3)을
+        로컬 OpenVINO 모델 디렉토리명으로 매핑한다.
+
+        설정 UI와 `_apply_db_settings`가 동일 규칙을 공유하도록 단일 정본으로 둔다.
+        """
+        return f"whisper-{model_size}-int8-ov"
 
     @classmethod
     def load_default(cls):
