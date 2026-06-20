@@ -128,4 +128,14 @@
 ## Phase 8: 오프라인 원클릭 패키징 및 배포 (순연)
 - [x] 8-1: pyannote 토큰리스 오프라인 로드 분기 구현 (`stt_agent.py` 내 로컬 `config.yaml` / `hf_cache` 감지 및 로드 구현 완료)
 - [x] 8-2: Embeddable Python 격리 패키지 빌드 자동화 스크립트 작성 (`build_release.py` 원클릭 릴리즈 툴 구현 완료)
-- [ ] 8-3: Inno Setup (`setup.iss`) 스크립트 작성 및 단일 설치파일(`PrismFlow_Setup_v1.0.exe`) 빌드 검증
+- [x] 8-3: Inno Setup (`setup.iss`) 스크립트 작성 및 단일 설치파일(`PrismFlow_Setup_v1.0.exe`) 빌드 검증 (스크립트 작성 및 릴리즈 빌더 --installer 통합 완료, 실제 컴파일은 Inno Setup 6 설치 후 수행 가능)
+
+
+## Phase 9: STT & Flow Agent 50% 성능 최적화
+- [/] 9-1: STT 화자 분리 아키텍처 경량화 (pyannote diarization pipeline 호출 제거 및 단독 embedding extractor 매칭 전환)
+- [/] 9-2: Flow Agent 증분 업데이트(Delta) 및 프롬프트 슬라이딩 윈도우/경량화 구현
+- [ ] 9-3: 최적화 검증용 단위 테스트 보강 및 전/후 벤치마크 정량 지표 측정
+- [/] 9-4: Chat Agent CLI 커넥션 에러 디버깅 (백그라운드 Ingest 제거, 원샷 슬라이딩 RAG 쿼리 및 지수 백오프 재시도 메커니즘 통합)
+
+
+

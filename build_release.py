@@ -4,14 +4,24 @@ import shutil
 import urllib.request
 import zipfile
 import logging
+import argparse
+import subprocess
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("PrismFlowBuilder")
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 RELEASE_DIR = os.path.join(PROJECT_ROOT, "release")
+DIST_DIR = os.path.join(PROJECT_ROOT, "dist")
 PYTHON_ZIP_URL = "https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip"
 PYTHON_ZIP_NAME = "python-3.11.9-embed-amd64.zip"
+
+# Inno Setup 6 ISCC.exe 탐색 경로 후보
+ISCC_SEARCH_PATHS = [
+    os.path.join(os.environ.get("ProgramFiles(x86)", ""), "Inno Setup 6", "ISCC.exe"),
+    os.path.join(os.environ.get("ProgramFiles", ""), "Inno Setup 6", "ISCC.exe"),
+    os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Inno Setup 6", "ISCC.exe"),
+]
 
 def setup_release_dirs():
     """릴리즈 빌드 폴더를 초기화 및 생성합니다."""
@@ -172,7 +182,107 @@ start "" "python-3.11.9-embed-amd64\\python.exe" main.py
         f.write(bat_content)
     logger.info("Created launcher.bat for quick runtime tests.")
 
+def find_iscc():
+    """Inno Setup 6의 ISCC.exe 경로를 탐색하여 반환합니다. 없으면 None."""
+    # shutil.which로 PATH 검색
+    iscc_in_path = shutil.which("ISCC")
+    if iscc_in_path:
+        return iscc_in_path
+    
+    # 표준 설치 경로 후보 검색
+    for candidate in ISCC_SEARCH_PATHS:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    
+    return None
+
+
+def build_installer():
+    """Inno Setup ISCC.exe로 setup.iss를 컴파일하여 단일 설치 파일을 생성합니다."""
+    logger.info("========================================")
+    logger.info("Building Inno Setup Installer...")
+    logger.info("========================================")
+    
+    # 1. setup.iss 존재 확인
+    iss_path = os.path.join(PROJECT_ROOT, "setup.iss")
+    if not os.path.exists(iss_path):
+        logger.error(f"setup.iss not found at: {iss_path}")
+        logger.error("Please create setup.iss before building the installer.")
+        return False
+    
+    # 2. release/ 폴더 존재 확인
+    if not os.path.exists(RELEASE_DIR):
+        logger.error(f"Release directory not found at: {RELEASE_DIR}")
+        logger.error("Please run `python build_release.py` first to create the release bundle.")
+        return False
+    
+    # 3. ISCC.exe 탐색
+    iscc_path = find_iscc()
+    if not iscc_path:
+        logger.error("Inno Setup 6 (ISCC.exe) not found!")
+        logger.error("Please install Inno Setup 6 from: https://jrsoftware.org/isinfo.php")
+        logger.error(f"Searched paths: {ISCC_SEARCH_PATHS}")
+        return False
+    
+    logger.info(f"Found ISCC.exe at: {iscc_path}")
+    
+    # 4. dist/ 출력 폴더 생성
+    os.makedirs(DIST_DIR, exist_ok=True)
+    
+    # 5. ISCC.exe 실행
+    cmd = [iscc_path, iss_path]
+    logger.info(f"Running: {' '.join(cmd)}")
+    
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, capture_output=True, text=True)
+    
+    if result.returncode != 0:
+        logger.error("ISCC.exe failed!")
+        if result.stdout:
+            logger.error(f"STDOUT:\n{result.stdout}")
+        if result.stderr:
+            logger.error(f"STDERR:\n{result.stderr}")
+        return False
+    
+    logger.info(result.stdout)
+    
+    # 6. 산출물 확인
+    expected_output = os.path.join(DIST_DIR, "PrismFlow_Setup_v1.0.exe")
+    if os.path.exists(expected_output):
+        size_mb = os.path.getsize(expected_output) / (1024 * 1024)
+        logger.info("========================================")
+        logger.info(f"Installer built successfully: {expected_output}")
+        logger.info(f"File size: {size_mb:.1f} MB")
+        logger.info("========================================")
+    else:
+        logger.warning("Installer build reported success, but output file not found at expected location.")
+        logger.warning(f"Expected: {expected_output}")
+    
+    return True
+
+
 def main():
+    parser = argparse.ArgumentParser(
+        description="PrismFlow Release Builder — Portable Python 번들 및 Inno Setup 인스톨러 빌드"
+    )
+    parser.add_argument(
+        "--installer",
+        action="store_true",
+        help="릴리즈 번들 생성 후 Inno Setup 인스톨러까지 빌드합니다."
+    )
+    parser.add_argument(
+        "--installer-only",
+        action="store_true",
+        help="릴리즈 번들 생성을 건너뛰고 기존 release/ 폴더로 인스톨러만 빌드합니다."
+    )
+    args = parser.parse_args()
+    
+    if args.installer_only:
+        # 릴리즈 빌드 생략, 인스톨러만
+        success = build_installer()
+        if not success:
+            sys.exit(1)
+        return
+    
     logger.info("========================================")
     logger.info("PrismFlow Release Builder Starting...")
     logger.info("========================================")
@@ -189,6 +299,15 @@ def main():
     logger.info("PrismFlow release bundle successfully built!")
     logger.info(f"Target location: {RELEASE_DIR}")
     logger.info("========================================")
+    
+    # --installer 플래그가 있으면 인스톨러도 빌드
+    if args.installer:
+        success = build_installer()
+        if not success:
+            logger.warning("Installer build failed. Release bundle is still available at: " + RELEASE_DIR)
+            sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
+

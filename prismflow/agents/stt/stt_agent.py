@@ -289,7 +289,7 @@ class RealTimeEngineWorker(QThread):
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
-                from pyannote.audio import Pipeline, Model, Inference
+                from pyannote.audio import Model, Inference
         except ImportError:
             return
 
@@ -303,19 +303,16 @@ class RealTimeEngineWorker(QThread):
             os.environ["HF_HUB_OFFLINE"] = "1"
             os.environ["HF_HOME"] = local_hf_cache
             try:
-                self.diarization_model = Pipeline.from_pretrained(local_config_yaml)
-                
                 # 임베딩 오프라인 로드 (HF_HOME이 로컬 캐시로 고정되어 있으므로 캐시 폴더에서 불러옴)
                 emb_model = Model.from_pretrained("pyannote/wespeaker-voxceleb-resnet34-LM")
                 self.embedding_extractor = Inference(emb_model, window="whole")
-                logger.info("Successfully loaded pyannote offline pipeline and embedding model.")
+                logger.info("Successfully loaded pyannote offline embedding model (Diarization pipeline skipped).")
                 return
             except Exception as e:
                 logger.warning(f"Failed to load pyannote offline: {e}. Falling back to online mode.")
                 # 실패 시 환경변수 롤백 및 온라인 폴백 진행
                 os.environ.pop("HF_HUB_OFFLINE", None)
                 os.environ.pop("HF_HOME", None)
-                self.diarization_model = None
                 self.embedding_extractor = None
 
         # 2단계: 기존 HF 토큰 온라인 폴백 로드
@@ -324,26 +321,14 @@ class RealTimeEngineWorker(QThread):
             return
 
         try:
-            # pyannote.audio 4.x는 token= 인자를 사용(구버전은 use_auth_token=)
-            try:
-                self.diarization_model = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1", token=token
-                )
-            except TypeError:
-                self.diarization_model = Pipeline.from_pretrained(
-                    "pyannote/speaker-diarization-3.1", use_auth_token=token
-                )
-        except Exception as e:
-            # 토큰 무효/약관 미동의/네트워크 오류 등은 단일 화자 폴백으로 흡수
-            self.diarization_model = None
-
-        try:
             # Speaker Embedding Model 로드 (wespeaker voxceleb)
             emb_model = Model.from_pretrained(
                 "pyannote/wespeaker-voxceleb-resnet34-LM", token=token
             )
             self.embedding_extractor = Inference(emb_model, window="whole")
+            logger.info("Successfully loaded pyannote online embedding model.")
         except Exception as e:
+            logger.warning(f"Failed to load pyannote online embedding model: {e}")
             self.embedding_extractor = None
 
     def _process_inference(self, audio_window) -> tuple:
@@ -358,12 +343,10 @@ class RealTimeEngineWorker(QThread):
                 return "Speaker_00", ""
 
         speaker = "Speaker_00"
-        if text and self.diarization_model is not None:
-            local_speaker = self._diarize_dominant_speaker(audio_window)
-            if self.embedding_extractor is not None:
-                speaker = self._match_global_speaker(audio_window, local_speaker)
-            else:
-                speaker = local_speaker
+        if text and self.embedding_extractor is not None:
+            # Diarization Pipeline 호출을 완전히 스킵하고, 단독 Embedding Extractor로 글로벌 코사인 매칭을 수행합니다.
+            # Local dominant speaker 추정 과정을 생략하여 획기적인 속도 향상을 얻습니다.
+            speaker = self._match_global_speaker(audio_window, "Speaker_00")
         return speaker, text
 
     def _diarize_dominant_speaker(self, audio_window) -> str:

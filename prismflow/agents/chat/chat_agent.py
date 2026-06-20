@@ -88,17 +88,11 @@ class ChatAgent(QObject):
         super().__init__()
         self.context = context or MeetingContext()
         self.cli_controller = cli_controller or ClaudeCLIController()
-        self.ingest_interval_ms = ingest_interval_ms
         
         self.session_id = None
         self.last_ingested_idx = -1
         self.cli_lock = threading.Lock()
         self.active_workers = []
-        
-        # 백그라운드 주입용 타이머
-        self.ingest_timer = QTimer(self)
-        self.ingest_timer.setInterval(self.ingest_interval_ms)
-        self.ingest_timer.timeout.connect(self.ingest_transcripts_background)
         
         # 컨텍스트 신호 연결
         self.context.signals.meeting_started.connect(self.on_meeting_started)
@@ -111,61 +105,23 @@ class ChatAgent(QObject):
         self.session_id = session_id
         self.last_ingested_idx = -1
         
-        # 최초 세션 확보용 실행
-        initial_prompt = "회의 챗 세션을 시작합니다."
-        worker = IngestWorker(self.cli_controller, initial_prompt, self.session_id, -1, self.cli_lock)
-        worker.finished.connect(self._on_initial_ingest_success)
-        worker.start()
-        self.active_workers.append(worker)
-        
-        self.ingest_timer.start()
-        
-    def _on_initial_ingest_success(self, last_idx):
+        # 백그라운드 IngestWorker 초기 기동을 제거하고 즉시 대화 세션 기동 완료 신호 방출
         logger.info(f"Initialized chat session: chat-session-{self.session_id}")
         self.session_initialized.emit()
-
         
     def on_meeting_ended(self, session_id: str):
-        self.ingest_timer.stop()
-        # 종료 전 미주입 대화 백그라운드 최종 주입
-        self.ingest_transcripts_background()
+        # 백그라운드 주입이 제거되었으므로 미팅 종료 시 추가 작업 없음
+        pass
         
     def ingest_transcripts_background(self):
-        if not self.session_id:
-            return
-            
-        transcripts = self.context.transcripts
-        if not transcripts:
-            return
-            
-        max_idx = len(transcripts) - 1
-        if max_idx <= self.last_ingested_idx:
-            return
-            
-        new_transcripts_list = []
-        for idx in range(self.last_ingested_idx + 1, len(transcripts)):
-            tr = transcripts[idx]
-            new_transcripts_list.append(f"[{tr['speaker']}]: {tr['text']}")
-            
-        new_transcripts = "\n".join(new_transcripts_list)
-        prompt = f"[시스템: 다음은 회의 중 추가된 신규 대화 내용입니다. 기억해 두세요.]\n{new_transcripts}"
-        
-        logger.debug(f"Ingesting new transcripts to session chat-session-{self.session_id}. Indexes {self.last_ingested_idx + 1} to {max_idx}")
-        
-        worker = IngestWorker(self.cli_controller, prompt, self.session_id, max_idx, self.cli_lock)
-        worker.finished.connect(self.on_ingest_success)
-        worker.error.connect(self.on_ingest_error)
-        worker.start()
-        self.active_workers.append(worker)
+        # Ingestion-free 구조로 변경됨에 따라 사용하지 않음 (하위 호환성 유지용 빈 함수)
+        pass
         
     def on_ingest_success(self, last_idx):
-        if last_idx > self.last_ingested_idx:
-            self.last_ingested_idx = last_idx
-            self.ingest_finished.emit(last_idx)
-            logger.info(f"Successfully ingested transcripts up to index {last_idx}")
-            
+        pass
+        
     def on_ingest_error(self, err_msg):
-        self.error_occurred.emit(f"Background Ingestion Error: {err_msg}")
+        pass
         
     def ask_question(self, user_query: str):
         if not self.session_id:
@@ -188,18 +144,29 @@ class ChatAgent(QObject):
             self.finished.emit(fallback_response)
             return
 
-        # 주입되지 않은 잔여 발화
-        unsubmitted_list = []
-        for idx in range(self.last_ingested_idx + 1, len(transcripts)):
-            tr = transcripts[idx]
-            unsubmitted_list.append(f"[{tr['speaker']}]: {tr['text']}")
+        # 2. 최근 100개 발화록 슬라이딩 RAG 윈도우 추출 (맥락 보존)
+        recent_transcripts = transcripts[-100:]
+        recent_list = []
+        for tr in recent_transcripts:
+            recent_list.append(f"[{tr['speaker']}]: {tr['text']}")
             
-        unsubmitted_transcripts = "\n".join(unsubmitted_list)
+        recent_transcripts_text = "\n".join(recent_list)
         
-        if unsubmitted_transcripts:
-            prompt = f"[최근 대화 추가]\n{unsubmitted_transcripts}\n\n[질문]\n{user_query}"
-        else:
-            prompt = f"[질문]\n{user_query}"
+        # 3. Flow 요약 맥락 (Mermaid) 및 질문 융합
+        current_mermaid = self.context.current_mermaid_code or "없음 (시각화 분석 전)"
+        
+        prompt = f"""당신은 PrismFlow 회의 Q&A 비서입니다.
+제공된 [회의 전체 지도(Mermaid)]와 [최근 주요 대화 내역]을 바탕으로, 사용자 질문에 답변해 주세요.
+
+[회의 전체 지도(Mermaid)]
+{current_mermaid}
+
+[최근 주요 대화 내역]
+{recent_transcripts_text}
+
+[질문]
+{user_query}
+"""
             
         logger.info(f"Sending Q&A request to session chat-session-{self.session_id}")
         
@@ -207,9 +174,9 @@ class ChatAgent(QObject):
         worker.token_delivered.connect(self.token_delivered.emit)
         
         def handle_success(final_response):
-            if max_idx > self.last_ingested_idx:
-                self.last_ingested_idx = max_idx
-                self.ingest_finished.emit(max_idx)
+            # 성공 시 마지막 인덱스 업데이트
+            self.last_ingested_idx = max_idx
+            self.ingest_finished.emit(max_idx)
                 
             if self.context.db_manager:
                 self.context.db_manager.add_chat_log(

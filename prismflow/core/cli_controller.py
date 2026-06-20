@@ -100,33 +100,49 @@ class ClaudeCLIController:
         session_id = self._normalize_session_id(session_id)
         extra_args = self._build_extra_args(model, system_prompt)
 
-        try:
-            # 1단계: 기존 세션이 있는지 확인하고 재개하기 위해 --resume로 시도합니다.
-            result = self._run_once(["--resume", session_id] + extra_args, prompt, timeout)
+        import time
+        max_retries = 3
+        delay = 1.0
+        last_exception = None
 
-            # 만약 해당 세션 ID를 찾을 수 없는 경우 (최초 호출) --session-id로 폴백하여 세션을 생성합니다.
-            if result.returncode != 0 and "No conversation found with session ID" in result.stderr:
-                logger.info(f"Session {session_id} not found. Initializing new session with --session-id.")
-                result = self._run_once(["--session-id", session_id] + extra_args, prompt, timeout)
+        for attempt in range(max_retries):
+            try:
+                # 1단계: 기존 세션이 있는지 확인하고 재개하기 위해 --resume로 시도합니다.
+                result = self._run_once(["--resume", session_id] + extra_args, prompt, timeout)
 
-            if result.returncode != 0:
-                err_msg = result.stderr.strip()
-                logger.error(f"Claude CLI execution failed (Code {result.returncode}): {err_msg}")
-                if "session limit" in err_msg.lower() or "limit" in err_msg.lower() or "reset" in err_msg.lower():
-                    self._session_limited = True
-                raise RuntimeError(f"Claude CLI execution failed: {err_msg}")
+                # 만약 해당 세션 ID를 찾을 수 없는 경우 (최초 호출) --session-id로 폴백하여 세션을 생성합니다.
+                if result.returncode != 0 and "No conversation found with session ID" in result.stderr:
+                    logger.info(f"Session {session_id} not found. Initializing new session with --session-id.")
+                    result = self._run_once(["--session-id", session_id] + extra_args, prompt, timeout)
+
+                if result.returncode != 0:
+                    err_msg = result.stderr.strip()
+                    logger.error(f"Claude CLI execution failed (Code {result.returncode}) on attempt {attempt+1}: {err_msg}")
+                    if "session limit" in err_msg.lower() or "limit" in err_msg.lower() or "reset" in err_msg.lower():
+                        self._session_limited = True
+                    raise RuntimeError(f"Claude CLI execution failed: {err_msg}")
+                    
+                return result.stdout.strip()
                 
-            return result.stdout.strip()
-            
-        except subprocess.TimeoutExpired as e:
-            logger.error(f"Claude CLI execution timed out after {timeout} seconds.")
-            raise TimeoutError(f"Claude CLI execution timed out after {timeout} seconds.") from e
-        except Exception as e:
-            err_str = str(e)
-            if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
-                self._session_limited = True
-            logger.error(f"Failed to run Claude CLI: {err_str}")
-            raise RuntimeError(f"Failed to run Claude CLI: {err_str}") from e
+            except subprocess.TimeoutExpired as e:
+                logger.error(f"Claude CLI execution timed out on attempt {attempt+1} after {timeout} seconds.")
+                last_exception = TimeoutError(f"Claude CLI execution timed out after {timeout} seconds.")
+            except Exception as e:
+                last_exception = e
+                err_str = str(e)
+                if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
+                    self._session_limited = True
+                    raise RuntimeError(f"Claude CLI session limit reached: {err_str}") from e
+
+            # 세션 리밋 상태이거나 마지막 시도이면 재시도 스킵
+            if self._session_limited or attempt == max_retries - 1:
+                break
+                
+            logger.warning(f"Claude CLI connection temporary failure on attempt {attempt+1}. Retrying in {delay}s...")
+            time.sleep(delay)
+            delay *= 2
+
+        raise last_exception or RuntimeError("Unknown error during Claude CLI execution.")
 
     def execute_command_stream(self, prompt: str, session_id: str, model: Optional[str] = None,
                                system_prompt: Optional[str] = None):
@@ -168,21 +184,40 @@ class ClaudeCLIController:
         cmd = [self._cli_exe, "-p"] + tail
         logger.debug(f"Executing Claude CLI Stream: {' '.join(cmd)}")
 
+        import time
+        max_retries = 3
+        delay = 1.0
+        proc = None
+        last_exception = None
+
         try:
-            # 프롬프트는 명령줄 인자가 아니라 STDIN으로 전달한다(Windows 다중줄 인자 훼손 방지).
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8',
-                errors='ignore',
-                shell=False,
-                cwd=self._cli_cwd
-            )
-            proc.stdin.write(prompt)
-            proc.stdin.close()
+            for attempt in range(max_retries):
+                try:
+                    # 프롬프트는 명령줄 인자가 아니라 STDIN으로 전달한다(Windows 다중줄 인자 훼손 방지).
+                    proc = subprocess.Popen(
+                        cmd,
+                        stdin=subprocess.PIPE,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding='utf-8',
+                        errors='ignore',
+                        shell=False,
+                        cwd=self._cli_cwd
+                    )
+                    proc.stdin.write(prompt)
+                    proc.stdin.close()
+                    break
+                except Exception as e:
+                    last_exception = e
+                    if attempt == max_retries - 1:
+                        break
+                    logger.warning(f"Claude CLI Popen temporary failure on attempt {attempt+1}: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+                    delay *= 2
+    
+            if proc is None:
+                raise last_exception or RuntimeError("Failed to start Claude CLI Stream process after retries.")
 
             for line in iter(proc.stdout.readline, ''):
                 yield line

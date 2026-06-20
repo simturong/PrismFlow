@@ -77,31 +77,23 @@ class FlowAgent(QThread):
 
     def _analyze_and_update(self, transcripts: list):
         """최근 발화 내용 및 화면 맥락을 수집하여 Claude CLI로 Mermaid 코드를 갱신합니다."""
-        # 1. 신규 발화 내역 추출 (증분 업데이트)
-        new_lines = []
+        # 1. 최근 15개 발화록 슬라이딩 윈도우 추출 (맥락 보존 및 입력 토큰 다이어트)
+        recent_transcripts = transcripts[-15:]
+        recent_lines = []
         has_visual_indicator = False
         visual_keywords = ["여기 보시면", "이 슬라이드", "이 도표", "이 그림", "이 화면", "여기를 보면"]
         
-        start_idx = self.last_analyzed_idx + 1
-        for idx in range(start_idx, len(transcripts)):
-            item = transcripts[idx]
+        for item in recent_transcripts:
             line = f"[{item['speaker']}] {item['text']}"
-            new_lines.append(line)
-            
+            recent_lines.append(line)
             # 발화 텍스트 중 시각 지시어 포함 여부 검사
-            if not has_visual_indicator:
-                for kw in visual_keywords:
-                    if kw in item['text']:
-                        has_visual_indicator = True
-                        break
-                        
-        new_transcripts_text = "\n".join(new_lines)
+            for kw in visual_keywords:
+                if kw in item['text']:
+                    has_visual_indicator = True
+                    break
+                    
+        recent_transcripts_text = "\n".join(recent_lines)
         max_idx = len(transcripts) - 1
-        
-        # 만약 신규 발화가 없는데 다이어그램이 비어 있는 특수 상황이면 전체를 다 사용
-        if not new_transcripts_text and not self.context.current_mermaid_code:
-            new_lines = [f"[{item['speaker']}] {item['text']}" for item in transcripts]
-            new_transcripts_text = "\n".join(new_lines)
         
         # 2. 스마트 화면 맥락 결합 (시각 지시어가 감지되었고 최근 화면 정보가 있을 때)
         screen_context_prompt = ""
@@ -114,14 +106,14 @@ class FlowAgent(QThread):
             elif stype == "GENERIC":
                 screen_context_prompt = "\n[참고: 사용자가 최근 활성 창을 다른 화면으로 전환했습니다. 발표자가 화면을 가리켜 말하고 있으므로 화면 전환 상태를 고려하여 흐름을 정리해 주세요.]"
 
-        # 3. 프롬프트 구성 (Stateful Upsert 제약 포함)
+        # 3. 프롬프트 구성 (Stateful Upsert 제약 포함, 발화록 15개 및 기존 다이어그램 전달)
         prev_mermaid = self.context.current_mermaid_code or "없음 (최초 작성)"
         
         prompt = f"""당신은 오프라인 회의 흐름도 시각화를 돕는 Flow Agent입니다.
-아래의 [신규 추가된 회의 발화 내역]과 [기존 Mermaid 코드]를 참고하여, 회의의 핵심 흐름과 신규 논의 사항을 누적 반영하는 Mermaid flowchart TD 코드를 작성해 주세요.
+제공된 [기존 Mermaid 코드]는 지금까지의 전체 회의 지도입니다. [최근 15개 회의 발화 내역]을 참고하여 기존 지도의 노드 구조를 유지하며 흐름도를 갱신해 주세요.
 
-[신규 추가된 회의 발화 내역]
-{new_transcripts_text}
+[최근 15개 회의 발화 내역]
+{recent_transcripts_text}
 {screen_context_prompt}
 
 [기존 Mermaid 코드]
