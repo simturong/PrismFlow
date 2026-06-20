@@ -66,7 +66,11 @@ class FlowUI(TranslucentOverlay):
         layout.addWidget(self.transcript_view, 1)
 
         # [3] 에이전트 상태 대시보드 (1/6)
+        # 상태 패널은 5개 뱃지(2열×3행 + 헤더)로 내용 높이가 고정적이다. 창을 세로로 키울 때
+        # 이 패널까지 함께 커지면 정작 흐름도(블록도)가 차지할 공간이 줄어든다. 따라서 최대 높이를
+        # 컴팩트하게 제한하여, 늘어난 세로 공간은 대부분 상단 Mermaid(4)와 전사 기록(1)이 흡수하도록 한다.
         self.status_panel = AgentStatusPanel(hub=hub, parent=self)
+        self.status_panel.setMaximumHeight(112)
         layout.addWidget(self.status_panel, 1)
 
         self._render_transcripts()
