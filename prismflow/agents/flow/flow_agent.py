@@ -21,6 +21,9 @@ class FlowAgent(QThread):
     
     # 갱신 완료 신호: 새롭게 파싱된 Mermaid 코드
     diagram_updated = Signal(str)
+    # 상태 가시화 신호 (Phase 10): 분석(CLI 호출) 시작 / 실패
+    analysis_started = Signal()
+    analysis_failed = Signal(str)
     
     def __init__(self, context: MeetingContext, cli_controller: ClaudeCLIController, check_interval_sec: float = 30.0):
         super().__init__()
@@ -77,6 +80,8 @@ class FlowAgent(QThread):
 
     def _analyze_and_update(self, transcripts: list):
         """최근 발화 내용 및 화면 맥락을 수집하여 Claude CLI로 Mermaid 코드를 갱신합니다."""
+        # 상태 가시화: 분석(생성) 시작을 알림 (Flow 뱃지 '생성중' 표시용)
+        self.analysis_started.emit()
         # 1. 최근 15개 발화록 슬라이딩 윈도우 추출 (맥락 보존 및 입력 토큰 다이어트)
         recent_transcripts = transcripts[-15:]
         recent_lines = []
@@ -155,6 +160,8 @@ class FlowAgent(QThread):
                 logger.warning(f"Claude returned invalid Mermaid code format: {response[:100]}...")
         except Exception as e:
             logger.error(f"Error during FlowAgent analysis loop: {str(e)}")
+            # 상태 가시화: CLI 입출력 실패를 알림 (Flow 뱃지 오류 표시용)
+            self.analysis_failed.emit(str(e)[:24])
             # 장애 발생 시 로컬 룰베이스 폴백 연동
             logger.info("Falling back to local rule-based Mermaid generator...")
             fallback_code = self._fallback_generate_mermaid(transcripts)

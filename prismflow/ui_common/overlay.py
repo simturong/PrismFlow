@@ -1,5 +1,6 @@
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton
 from PySide6.QtCore import Qt, QPropertyAnimation, QPoint, QRect, QEvent
+from prismflow.ui_common.indicators import RecordingIndicator
 
 class TranslucentOverlay(QWidget):
     """
@@ -42,6 +43,10 @@ class TranslucentOverlay(QWidget):
         
         # 창 조작 버튼 초기화
         self._init_control_buttons()
+
+        # 좌상단 녹음(회의 진행) 인디케이터 — 회의 시작 시 set_recording(True)로 점멸 표시
+        self.recording_indicator = RecordingIndicator(self)
+        self.recording_indicator.move(16, 9)
 
     def _init_control_buttons(self):
         # 컨트롤 버튼들을 포함하는 플로팅 위젯
@@ -127,10 +132,19 @@ class TranslucentOverlay(QWidget):
             self._update_maximize_button_style()
         super().changeEvent(event)
 
+    def set_recording(self, recording: bool):
+        """오버레이 좌상단 녹음 인디케이터의 점멸을 켜고 끈다 (회의 시작/종료 시 호출)."""
+        self.recording_indicator.set_recording(recording)
+        if recording:
+            self.recording_indicator.raise_()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         # 우측 상단 배치 (우측 14px, 상단 12px 여백)
         self.control_widget.move(self.width() - self.control_widget.width() - 14, 12)
+        # 무거운 QWebEngineView 등 레이아웃 자식 위에 항상 보이도록 z-order 상위 유지
+        self.control_widget.raise_()
+        self.recording_indicator.raise_()
 
     def paintEvent(self, event):
         from PySide6.QtGui import QPainter, QColor

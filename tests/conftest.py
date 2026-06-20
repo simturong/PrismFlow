@@ -30,6 +30,21 @@ def isolate_meeting_context(tmp_path):
 
     ctx = MeetingContext()
     ctx.reset()
+
+    # 이전 테스트에서 컨텍스트 싱글톤 시그널에 남은 슬롯(좀비 코디네이터/에이전트) 누수를 차단한다.
+    # 비우지 않으면 다른 테스트가 start/end_meeting 할 때 좀비 객체가 반응해 STT(PyAudio)/Flow
+    # 스레드를 중복 생성하고 네이티브 접근 위반(segfault)을 유발한다.
+    # (연결된 슬롯이 없을 때 PySide가 내는 RuntimeWarning은 정상 경로이므로 억제한다.)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for _sig in (ctx.signals.meeting_started, ctx.signals.meeting_ended,
+                     ctx.signals.transcript_updated, ctx.signals.flow_updated):
+            try:
+                _sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+
     ctx._config = iso_config
     ctx.db_manager = DatabaseManager(iso_config.db_path)
 

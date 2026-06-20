@@ -145,4 +145,12 @@
 - [x] DB 다중 스레드 동시성 하드닝: WAL 저널 모드 + busy_timeout 적용, 전체 스위트 3회 연속 무결 통과(세그폴트 0회)
 
 
+## Phase 10: 에이전트 상태 대시보드 & 사용성 개선 (오버레이 UX)
+- [x] 10-1: 에이전트 상태 집계 허브(`core/agent_status.py`) — 5개 에이전트(STT·Flow·Chat·i2t·Report)의 IDLE/OK/WORKING/ERROR 상태를 신호 기반(폴링 0)으로 집계·배포
+- [x] 10-2: 에이전트 상태 패널(`ui_common/status_panel.py`) — 색점+상세 뱃지로 각 에이전트 정상/오류(핵심 1단어)·교정DB 상태·생성중·질문수신 등을 실시간 표시
+- [x] 10-3: 녹음 인디케이터(`ui_common/indicators.py`) — `● 녹음 중` 빨간 점멸을 베이스 오버레이에 탑재하여 두 반투명창 모두 좌상단 표시(회의 시작/종료 연동)
+- [x] 10-4: FlowUI 3분할 레이아웃 재구성 — 세로 4:1:1 (Mermaid 차트 : 확정 전사 기록(누적 스크롤, 최근 50개) : 에이전트 상태 패널)
+- [x] 10-5: 코디네이터 신호 배선 — 모든 에이전트 상태를 허브로 중계(Flow `analysis_started/failed`, Chat `question_received` 신규 신호 포함)
+- [x] 10-6: (안정화) 코디네이터/ChatAgent의 컨텍스트 시그널 구독 누수 수정 — 좀비 코디네이터가 후속 회의에 반응해 STT(PyAudio)/Flow 스레드를 중복 생성하던 **access violation(세그폴트) 근본 원인** 제거 + conftest 시그널 격리. 전체 67 passed·3회 연속 무결
+
 

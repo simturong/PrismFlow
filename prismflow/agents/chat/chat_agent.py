@@ -59,6 +59,8 @@ class ChatAgent(QObject):
     error_occurred = Signal(str)
     ingest_finished = Signal(int)
     session_initialized = Signal()
+    # 상태 가시화 신호 (Phase 10): 사용자 질문 수신
+    question_received = Signal(str)
     
     def __init__(self, context: Optional[MeetingContext] = None, cli_controller: Optional[ClaudeCLIController] = None, ingest_interval_ms: int = 180000):
         super().__init__()
@@ -92,6 +94,9 @@ class ChatAgent(QObject):
     def ask_question(self, user_query: str):
         if not self.session_id:
             self.session_id = "default_session"
+
+        # 상태 가시화: 사용자 질문 수신을 알림 (Chat 뱃지 '질문수신' 표시용)
+        self.question_received.emit(user_query)
 
         # 이미 완료된 Q&A 워커를 정리하여 active_workers 무한 누적을 방지합니다(질문이 반복돼도 상수 유지).
         # 아직 실행 중인 워커만 보존하므로 진행 중 스레드를 조기 회수해 크래시를 유발하지 않습니다.
@@ -218,6 +223,15 @@ class ChatAgent(QObject):
         (DB·CLI 접근 중인 워커를 즉시 terminate()하면 SQLite 네이티브 접근 위반을 유발할 수 있어 회피)
         """
         logger.info("Cleaning up ChatAgent resources...")
+        # 싱글톤 컨텍스트 구독을 해제하여 소멸 후에도 좀비 ChatAgent가 회의 신호에 반응하지 않도록 합니다.
+        for sig, slot in (
+            (self.context.signals.meeting_started, self.on_meeting_started),
+            (self.context.signals.meeting_ended, self.on_meeting_ended),
+        ):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
         for worker in list(self.active_workers):
             try:
                 if worker.isRunning():
