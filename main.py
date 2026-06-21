@@ -133,6 +133,7 @@ class AppCoordinator:
         # 1. 스마트 화면 감지기(i2t) 기동 (확인 테스트 편의를 위해 5.0초 디바운스로 설정)
         self.screen_detector = ScreenTransitionDetector(debounce_sec=5.0)
         self.screen_detector.transition_detected.connect(self._on_screen_transition)
+        self.screen_detector.slide_text_detected.connect(self._on_slide_text)
         self.screen_detector.start()
 
         # 2. Flow Agent 기동 + 상태 가시화 신호 연결
@@ -198,6 +199,18 @@ class AppCoordinator:
         # i2t(화면감지)가 맥락을 컨텍스트에 전달 → 정상 동작 표시
         detail = f"PPT p{info[1]}" if ttype == "PPT" and isinstance(info, (list, tuple)) and len(info) >= 2 else "화면전환"
         self.status_hub.set_status("i2t", AgentState.OK, detail)
+
+    def _on_slide_text(self, text: str):
+        """발표 슬라이드 텍스트에서 도메인 용어를 추출해 화면 용어집(STT 교정용)에 등록한다."""
+        try:
+            from prismflow.core.glossary import extract_glossary_terms
+            terms = extract_glossary_terms(text)
+            if terms and self.context.db_manager:
+                self.context.db_manager.add_glossary_terms(terms)
+                logger.info(f"Registered {len(terms)} screen glossary term(s) for STT correction.")
+                self.status_hub.set_status("i2t", AgentState.OK, f"용어 {len(terms)}")
+        except Exception as e:
+            logger.warning(f"Failed to register glossary terms: {e}")
 
     def _on_meeting_ended(self, session_id: str):
         logger.info(f"Meeting session {session_id} ended. Cleaning up agents...")

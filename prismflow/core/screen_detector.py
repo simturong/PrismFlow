@@ -24,6 +24,8 @@ class ScreenTransitionDetector(QObject):
     """
     # 신호 정의: transition_type ("PPT" 또는 "GENERIC"), info (상세 정보 튜플 또는 배열)
     transition_detected = Signal(str, object)
+    # 현재 PPT 슬라이드의 텍스트(용어집 추출용). 전환 확정 시 best-effort로 방출.
+    slide_text_detected = Signal(str)
     
     def __init__(self, debounce_sec: float = 30.0, check_interval_ms: int = 1000):
         super().__init__()
@@ -124,6 +126,35 @@ class ScreenTransitionDetector(QObject):
             
         return None
 
+    def _get_active_slide_text(self) -> str:
+        """현재 활성 PowerPoint 슬라이드의 모든 도형 텍스트를 합쳐 반환한다(없으면 빈 문자열).
+
+        용어집 추출용이며 best-effort다. COM 오류/비활성 상태에서는 조용히 빈 문자열을 반환한다.
+        """
+        if not HAS_WIN32COM:
+            return ""
+        self._init_com()
+        try:
+            ppt_app = win32com.client.GetActiveObject("PowerPoint.Application")
+        except Exception:
+            return ""
+        try:
+            if ppt_app.SlideShowWindows.Count > 0:
+                slide = ppt_app.SlideShowWindows(1).View.Slide
+            else:
+                slide = ppt_app.ActiveWindow.View.Slide
+            texts = []
+            for shape in slide.Shapes:
+                try:
+                    if shape.HasTextFrame and shape.TextFrame.HasText:
+                        texts.append(str(shape.TextFrame.TextRange.Text))
+                except Exception:
+                    continue
+            return "\n".join(texts)
+        except Exception as e:
+            logger.debug(f"Failed to read active slide text: {str(e)}")
+            return ""
+
     def _capture_generic_frame_32x32(self) -> np.ndarray:
         """기본 화면을 캡처하여 32x32 크기의 1채널 GrayScale Numpy 배열로 변환합니다."""
         try:
@@ -196,9 +227,15 @@ class ScreenTransitionDetector(QObject):
         else:
             logger.info(f"Screen transition confirmed. Type: {self.pending_type}")
             self.last_settled_info = self.pending_info
-            
+
             # 최종 이벤트 방출
             self.transition_detected.emit(self.pending_type, self.pending_info)
+
+            # PPT 전환이면 현재 슬라이드 텍스트를 추출해 용어집용으로 방출(best-effort)
+            if self.pending_type == "PPT":
+                slide_text = self._get_active_slide_text()
+                if slide_text.strip():
+                    self.slide_text_detected.emit(slide_text)
             
         # 펜딩 상태 초기화
         self.pending_type = None

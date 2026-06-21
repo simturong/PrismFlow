@@ -108,6 +108,13 @@ class DatabaseManager:
                             actual_name TEXT NOT NULL
                         )
                     """)
+                    # 5-5. 화면(PPT) 용어집 — STT 오인식 보정용 정확한 표기 모음
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS screen_glossary (
+                            term TEXT PRIMARY KEY,
+                            timestamp REAL NOT NULL
+                        )
+                    """)
 
                     # 6. 레거시 스키마 마이그레이션
                     #    CREATE TABLE IF NOT EXISTS는 기존 테이블의 컬럼을 갱신하지 못하므로,
@@ -437,5 +444,38 @@ class DatabaseManager:
                 cur = conn.cursor()
                 cur.execute("SELECT speaker_id, actual_name FROM speaker_profiles")
                 return {row["speaker_id"]: row["actual_name"] for row in cur.fetchall()}
+            finally:
+                conn.close()
+
+    def add_glossary_terms(self, terms) -> None:
+        """화면 용어집에 정확한 표기들을 등록한다(이미 있으면 timestamp만 갱신)."""
+        import time
+        terms = [t for t in (terms or []) if t and t.strip()]
+        if not terms:
+            return
+        now = time.time()
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                with conn:
+                    conn.executemany(
+                        "INSERT INTO screen_glossary (term, timestamp) VALUES (?, ?) "
+                        "ON CONFLICT(term) DO UPDATE SET timestamp = excluded.timestamp",
+                        [(t, now) for t in terms],
+                    )
+            finally:
+                conn.close()
+
+    def get_glossary_terms(self, limit: int = 200) -> set:
+        """최근 등록된 화면 용어집 표기들을 집합으로 가져온다(상한 limit, 최신 우선)."""
+        with self._lock:
+            conn = self._get_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT term FROM screen_glossary ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                return {row["term"] for row in cur.fetchall()}
             finally:
                 conn.close()

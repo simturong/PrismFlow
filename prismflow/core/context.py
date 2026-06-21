@@ -135,6 +135,12 @@ class MeetingContext:
                 for pattern, replacement in corrections.items():
                     import re
                     text = re.sub(pattern, replacement, text)
+
+                # 3. 화면(PPT) 용어집 기반 근접 보정 — 발표 화면의 정확한 표기로 STT 오인식을 되돌린다.
+                glossary = self._db_manager.get_glossary_terms()
+                if glossary:
+                    from prismflow.core.glossary import apply_glossary_correction
+                    text = apply_glossary_correction(text, glossary)
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).warning(f"Failed to apply corrections or profiles in add_transcript: {e}")
