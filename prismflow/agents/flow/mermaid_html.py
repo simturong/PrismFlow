@@ -48,6 +48,16 @@ def get_mermaid_html() -> str:
             overflow: auto;
             box-sizing: border-box;
         }
+        /* 다이어그램 교체 시 부드러운 페이드/슬라이드 인 (다이나믹 전환) */
+        .mermaid {
+            opacity: 0;
+            transform: translateY(8px) scale(0.98);
+            transition: opacity 0.45s ease-out, transform 0.45s ease-out;
+        }
+        .mermaid.fade-in {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+        }
         /* Mermaid 커스텀 스타일 정의 */
         .mermaid {
             width: 100%;
@@ -73,8 +83,10 @@ def get_mermaid_html() -> str:
                 primaryTextColor: '#ffffff',
                 lineColor: '#03a9f4',
                 secondaryColor: '#2d2d35',
-                tertiaryColor: '#1a1a20'
+                tertiaryColor: '#1a1a20',
+                fontSize: '28px'
             },
+            flowchart: { useMaxWidth: true, htmlLabels: true, padding: 12 },
             securityLevel: 'loose'
         });
         
@@ -89,11 +101,16 @@ def get_mermaid_html() -> str:
             const uniqueId = 'mermaid-svg-' + Date.now();
             
             container.innerHTML = '<div class="mermaid" id="' + uniqueId + '">' + decodedCode + '</div>';
-            
+
             try {
                 // Mermaid v10+ 호환 동적 렌더링 실행
                 mermaid.run({
                     nodes: [document.getElementById(uniqueId)]
+                });
+                // 렌더 직후 fade-in 클래스 부여 → 부드러운 전환 애니메이션 트리거
+                requestAnimationFrame(function() {
+                    var el = document.getElementById(uniqueId);
+                    if (el) { el.classList.add('fade-in'); }
                 });
             } catch (e) {
                 console.error("Mermaid Dynamic Render Exception: ", e);

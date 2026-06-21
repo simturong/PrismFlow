@@ -55,11 +55,13 @@ class AppCoordinator:
 
         # UI 컴포넌트
         self.tray = SystemTrayManager()
-        self.flow_ui = FlowUI(hub=self.status_hub)
 
-        # Chat Agent 및 UI 기동
+        # Chat Agent 및 Chat 패널 (Phase 16: 단독 창이 아니라 콘솔 우측에 임베드)
         self.chat_agent = ChatAgent(self.context, self.cli_controller)
         self.chat_ui = ChatUI(self.chat_agent)
+
+        # 단일 회의 콘솔: 좌=Flow 흐름도/전사/상태, 우=Chat 패널(토글). chat_ui를 호스트가 임베드한다.
+        self.flow_ui = FlowUI(hub=self.status_hub, chat_panel=self.chat_ui)
 
         # Chat Agent 동작 상태를 허브에 반영 (자동 입출력/사용자 입력 수신 가시화)
         self.chat_agent.session_initialized.connect(
@@ -76,8 +78,8 @@ class AppCoordinator:
         # CLI 디버그 로그 창 (개발용) — 백그라운드 에이전트들의 CLI 주고받기를 한 곳에서 관찰
         self.cli_log_window = CliLogWindow()
 
-        # 트레이 매니저에 UI 핸들 주입
-        self.tray.set_ui_handlers(self.flow_ui, self.chat_ui, self.cli_log_window)
+        # 트레이 매니저에 UI 핸들 주입 (Phase 16: Flow/Chat이 단일 콘솔이라 둘 다 콘솔 창을 가리킨다)
+        self.tray.set_ui_handlers(self.flow_ui, self.flow_ui, self.cli_log_window)
 
         # Report Agent 기동 (회의 종료 시 최종 회의록 자동 컴파일)
         self.report_agent = ReportAgent(self.context, self.cli_controller)
@@ -97,20 +99,12 @@ class AppCoordinator:
         self.context.signals.meeting_ended.connect(self._on_meeting_ended)
         self.context.signals.transcript_updated.connect(self._on_transcript_updated)
         
-        # 오버레이 초기 위치 배치
+        # 단일 회의 콘솔 배치 (우측 상단). 좌 Flow + 우 Chat이 한 창에 들어간다.
         screen = self.app.primaryScreen().geometry()
-        
-        # Flow UI (우측 상단)
-        flow_x = screen.width() - self.flow_ui.width() - 40
-        flow_y = 50
-        self.flow_ui.move(flow_x, flow_y)
+        console_x = max(20, screen.width() - self.flow_ui.width() - 40)
+        console_y = 50
+        self.flow_ui.move(console_x, console_y)
         self.flow_ui.show()
-        
-        # Chat UI (우측 하단)
-        chat_x = screen.width() - self.chat_ui.width() - 40
-        chat_y = screen.height() - self.chat_ui.height() - 100
-        self.chat_ui.move(chat_x, chat_y)
-        self.chat_ui.show()
 
     def _on_meeting_started(self, session_id: str):
         logger.info(f"Meeting session {session_id} started. Launching Phase 3 & 4 agents...")
@@ -118,9 +112,8 @@ class AppCoordinator:
         # 회의 시작 시 세션 리밋 상태를 항상 False로 리셋
         self.cli_controller.set_session_limited(False)
 
-        # 녹음(회의 진행) 인디케이터 점멸 시작 — 두 반투명 오버레이 모두 좌상단 표시
+        # 녹음(회의 진행) 인디케이터 점멸 시작 — 단일 콘솔 컨트롤바에 표시
         self.flow_ui.set_recording(True)
-        self.chat_ui.set_recording(True)
 
         # 회의정보 스트립 초기화 (PrismFlow Assistant 창)
         self._transcript_count = 0
@@ -217,9 +210,8 @@ class AppCoordinator:
     def _on_meeting_ended(self, session_id: str):
         logger.info(f"Meeting session {session_id} ended. Cleaning up agents...")
 
-        # 녹음 인디케이터 정지 — 두 오버레이 모두
+        # 녹음 인디케이터 정지 — 단일 콘솔 컨트롤바
         self.flow_ui.set_recording(False)
-        self.chat_ui.set_recording(False)
 
         # 1. STT Worker 종료
         if self.stt_worker:

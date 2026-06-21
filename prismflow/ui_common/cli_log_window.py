@@ -17,11 +17,12 @@ from PySide6.QtCore import Qt
 from prismflow.core.cli_activity import get_cli_activity_log
 
 # 에이전트별 뱃지 색 (상태 패널과 톤을 맞춘 가독성 높은 색)
+# 키 문자열은 cli_activity.agent_label_for_session 반환값 및 필터 콤보 항목과 정확히 일치해야 한다.
 _AGENT_COLORS = {
     "Flow": "#38bdf8",
     "Chat": "#a78bfa",
+    "Q&A(도구)": "#34d399",
     "Report": "#f59e0b",
-    "Agent": "#34d399",
     "CLI": "#94a3b8",
 }
 # 디버그 표시용 프롬프트/응답 최대 길이(메모리·렌더 비용 상한)
@@ -52,7 +53,7 @@ class CliLogWindow(QWidget):
 
         toolbar.addWidget(self._dim_label("에이전트"))
         self.filter_combo = QComboBox(self)
-        self.filter_combo.addItems(["전체", "Flow", "Chat", "Report", "Agent", "CLI"])
+        self.filter_combo.addItems(["전체", "Flow", "Chat", "Q&A(도구)", "Report", "CLI"])
         self.filter_combo.currentTextChanged.connect(self._on_filter_changed)
         toolbar.addWidget(self.filter_combo)
 
@@ -65,6 +66,17 @@ class CliLogWindow(QWidget):
         self.clear_btn.clicked.connect(self._on_clear)
         toolbar.addWidget(self.clear_btn)
         root.addLayout(toolbar)
+
+        # 범례 — 에이전트 분류 의미 + i2t가 여기 없는 이유 안내(혼란 방지)
+        legend = QLabel(
+            "Flow=흐름도 · Chat=질의응답 · Q&A(도구)=웹검색/파일 도구 호출 · "
+            "Report=회의록 · CLI=기타(미분류)   "
+            "※ i2t(화면감지)는 로컬 처리라 CLI 로그가 없습니다 — 동작 상태는 상단 상태패널의 i2t 뱃지로 확인하세요.",
+            self,
+        )
+        legend.setWordWrap(True)
+        legend.setStyleSheet("color: #94a3b8; font-size: 10px; padding: 0 2px 2px 2px;")
+        root.addWidget(legend)
 
         # 본문: 로그 뷰
         self.view = QTextBrowser(self)

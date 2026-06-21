@@ -29,8 +29,8 @@ def agent_label_for_session(session_id) -> str:
     if s.startswith("report-session"):
         return "Report"
     if s.startswith("agent-session"):
-        return "Agent"  # 범용(도구 사용) 어시스턴트 모드
-    return "CLI"
+        return "Q&A(도구)"  # 웹검색·파일 도구를 사용하는 도구증강 Q&A 모드
+    return "CLI"  # 미분류 폴백(위 접두사에 해당하지 않는 직접 호출)
 
 
 class CliActivityLog(QObject):

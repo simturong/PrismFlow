@@ -92,6 +92,13 @@ class TranslucentOverlay(QWidget):
         self.opacity_slider.sliderReleased.connect(self._on_opacity_slider_released)
 
         # 일시중지 버튼 — \uE769 (Pause) / \uE768 (Play)
+        # 회의 시작 버튼 — Play 글리프. 회의 비활성일 때만 보이며, 시작하면 일시중지/정지로 전환된다.
+        self.btn_start = QPushButton(self.control_widget)
+        self.btn_start.setFixedSize(28, 20)
+        self.btn_start.setText("")  # Play
+        self.btn_start.setToolTip("회의 시작")
+        self.btn_start.clicked.connect(self._on_start_clicked)
+
         self.btn_pause = QPushButton(self.control_widget)
         self.btn_pause.setFixedSize(28, 20)
         self.btn_pause.setText("\uE769")
@@ -129,6 +136,7 @@ class TranslucentOverlay(QWidget):
 
         # QSS 스타일 초기 적용 (윈도우 표준 플랫 스타일, 고대비 색상)
         self.btn_minimize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+        self.btn_start.setStyleSheet(self._button_style("#4ade80", "transparent", "rgba(74, 222, 128, 0.25)"))
         self.btn_pause.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
         self.btn_stop.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
         self.btn_close.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
@@ -136,8 +144,12 @@ class TranslucentOverlay(QWidget):
 
         layout.addWidget(self.recording_indicator)
         layout.addWidget(self.opacity_slider)
+        layout.addWidget(self.btn_start)
         layout.addWidget(self.btn_pause)
         layout.addWidget(self.btn_stop)
+
+        # 초기 표시: 회의 비활성이면 시작 버튼만, 활성이면 일시중지/정지만.
+        self.btn_start.setVisible(not self.context.is_meeting_active)
         layout.addWidget(self.btn_minimize)
         layout.addWidget(self.btn_maximize)
         layout.addWidget(self.btn_close)
@@ -284,6 +296,13 @@ class TranslucentOverlay(QWidget):
             pass
         super().closeEvent(event)
 
+    def _on_start_clicked(self):
+        """창의 ▶ 버튼으로 회의를 시작한다(트레이 '회의 시작'과 동일 경로)."""
+        from datetime import datetime
+        if not self.context.is_meeting_active:
+            session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.context.start_meeting(session_id)
+
     def _on_pause_clicked(self):
         self.context.toggle_pause()
 
@@ -291,6 +310,7 @@ class TranslucentOverlay(QWidget):
         self.context.end_meeting()
 
     def _on_meeting_started(self, session_id: str):
+        self.btn_start.setVisible(False)
         self.btn_pause.setVisible(True)
         self.btn_stop.setVisible(True)
         self.btn_pause.setText("\uE769") # Pause
@@ -300,6 +320,7 @@ class TranslucentOverlay(QWidget):
     def _on_meeting_ended(self, session_id: str):
         self.btn_pause.setVisible(False)
         self.btn_stop.setVisible(False)
+        self.btn_start.setVisible(True)
         self._reposition_controls()
 
     def _on_meeting_paused(self, paused: bool):

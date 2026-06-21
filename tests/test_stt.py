@@ -3,8 +3,22 @@ import pytest
 import time
 from prismflow.core.context import MeetingContext
 from prismflow.core.config import AppConfig
-from prismflow.agents.stt.stt_agent import RealTimeEngineWorker
+from prismflow.agents.stt.stt_agent import RealTimeEngineWorker, collapse_repetitions
 from prismflow.agents.stt.audio import MOCK_DIALOGUES
+
+
+def test_collapse_repetitions_removes_loop():
+    """반복 디코딩 환각(같은 토큰 3회 이상 연속)을 최대 2회로 줄인다."""
+    looped = "안녕하세요 " + " ".join(["아,"] * 20) + " 지금 18번이요"
+    out = collapse_repetitions(looped)
+    assert out.count("아,") == 2
+    assert "안녕하세요" in out and "지금 18번이요" in out
+    # 자연스러운 2회 반복은 보존
+    assert collapse_repetitions("네 네 맞아요") == "네 네 맞아요"
+    # 빈/단일 토큰 방어
+    assert collapse_repetitions("") == ""
+    assert collapse_repetitions("확인") == "확인"
+
 
 @pytest.fixture
 def mock_stt_config(temp_config):

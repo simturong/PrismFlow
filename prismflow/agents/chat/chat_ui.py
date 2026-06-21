@@ -6,7 +6,6 @@ from PySide6.QtWidgets import (
     QLineEdit, QPushButton, QFrame, QGraphicsOpacityEffect, QFileDialog
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QAbstractAnimation, QEasingCurve
-from prismflow.ui_common.overlay import TranslucentOverlay
 from prismflow.agents.chat.chat_agent import ChatAgent
 
 
@@ -67,9 +66,13 @@ def markdown_to_html(md_text: str) -> str:
     return '\n'.join(lines)
 
 
-class ChatUI(TranslucentOverlay):
-    """QSS Glassmorphism 및 Markdown 출력을 지원하는 대화창 오버레이 UI"""
-    
+class ChatUI(QWidget):
+    """QSS Glassmorphism 및 Markdown 출력을 지원하는 대화 패널.
+
+    (Phase 16) 단독 오버레이 창이 아니라 PrismFlow 콘솔(FlowUI) 우측에 임베드되는 패널이다.
+    창 크롬(드래그·페이드·컨트롤바·녹음표시)은 호스트 오버레이가 단독 소유한다.
+    """
+
     def __init__(self, agent: Optional[ChatAgent] = None, parent=None):
         super().__init__(parent)
         self.agent = agent or ChatAgent()

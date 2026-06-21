@@ -99,9 +99,10 @@ def test_flow_ui_three_pane_layout(q_app):
         assert ui.status_panel is not None
         assert ui.headline_label is not None
 
-        # 흐름도(블록도)만 신축(stretch) 영역이라 세로 공간 대부분(~90%)을 흡수한다.
-        # 뉴스 자막/전사 스트립/상태 줄은 고정/캡 높이(stretch 0)로 최소화한다.
-        lay = ui.layout()
+        # (Phase 16) FlowUI 최상위는 좌/우 분할 QHBoxLayout. chat_panel 미지정 시 좌 컨테이너 1개만.
+        assert ui.layout().count() == 1
+        # 좌측 Flow 콘텐츠 본문(세로 레이아웃)은 web_view의 부모 컨테이너가 갖는다.
+        lay = ui.web_view.parentWidget().layout()
         assert lay.count() == 4
         assert lay.stretch(0) == 0   # headline (고정)
         assert lay.stretch(1) == 1   # web_view(흐름도) — 유일한 신축 영역

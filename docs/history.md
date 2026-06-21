@@ -446,6 +446,45 @@
 ## 🚀 Phase 15: STT 상위 모델(medium/large-v3) 실배선 및 셋업 도구 (2026-06-21)
 
 ### 1. 주요 구현 내용
+- **사전 점검으로 진짜 공백 식별**: medium/large 지원에 착수하며 현행 코드를 먼저 점검한 결과, 모델 크기→OV 디렉토리 매핑(`AppConfig.whisper_dir_name`)·설정 콤보(tiny~large-v3)·동적 로드·미설치 라벨까지 배선은 이미 완비돼 있었고, 진짜 공백은 ①상위 모델 획득 수단 ②미설치 안내뿐이었다.
+- **출처 정합 발견**: 기존 `whisper-small-int8-ov`가 HuggingFace `OpenVINO` org의 사전 빌드 int8-ov임을 README가 가리켰고, 동일 org가 medium/large-v3도 제공하므로 optimum/nncf 로컬 변환 없이 `snapshot_download`만으로 동일 출처·레이아웃을 재현했다.
+- **셋업 스크립트(`scripts/setup_whisper_model.py`)** 신설(`--list`/`--force`/멱등 skip, 순수 헬퍼 분리)과 **미설치 안내 UX**(에러·설정 라벨에 복붙 가능한 설치 명령) 보강. medium(748MB) 실설치·OpenVINO 로드(CPU 2.1s) 검증. 가중치는 `.gitignore` 처리(미커밋).
+
+### 2. 교훈
+- **"기획→구현" 전 현행 코드부터 점검**: 큰 작업처럼 보였지만 배선 대부분이 이미 존재해, 중복 구현 없이 최소 변경으로 진짜 공백만 메웠다.
+- **에러 메시지는 곧 복구 절차**: "경로 안내"→"복붙 가능한 설치 명령"으로 바꿔 사용자가 막힘 없이 자가 해결하게 했다.
+
+
+---
+
+## 🚀 Phase 16: 통합 회의 콘솔 UI 재구성 및 STT 성능·정확도 향상 (2026-06-21)
+
+### 1. 배경
+Phase 15(medium 실배선) 직후 사용자가 실제 회의로 E2E를 돌려 6개 개선점을 제기했다: ①Flow/Chat 창 통합+채팅 토글 ②핵심 요약 중앙·2배폰트·핵심어 강조 ③STT 반응성·정확도 향상 ④회의 시작 버튼이 일시정지/정지로 모핑 ⑤Mermaid 다이나믹·2배폰트·주제전환 ⑥CLI 디버그 분류 혼란/i2t 위치. 결정: STT는 균형(medium+GPU), 6항목 단일 Phase 16.
+
+### 2. 주요 구현 내용
+- **CLI 디버그 분류 정리(16-6)**: 세션 접두사 라벨 `agent-session`→"Q&A(도구)"로 명확화, 필터 콤보 재정렬, 범례 추가. **i2t는 Claude CLI를 쓰지 않는 로컬 화면감지라 CLI 로그가 없음**을 범례로 명시(사용자가 디버그 창에서 i2t를 찾던 혼란 해소) — 동작 상태는 상태패널 i2t 뱃지로 본다고 안내.
+- **헤드라인 가독성(16-2)**: 뉴스 자막바를 중앙정렬·26px(2배)·워드랩으로 키우고, `_highlight_keywords`로 숫자/날짜/수량 토큰과 회의 용어집 매칭어를 색강조. 원문 위 단일 스캔으로 매칭/비매칭을 각각 이스케이프해 마크업 주입·재치환 사고를 차단.
+- **Mermaid 다이나믹(16-5)**: themeVariables fontSize 28px(2배), 다이어그램 교체 시 fade-in 전환 애니메이션, 주제 전환 시 새 subgraph로 명확히 분기하도록 프롬프트 규칙 강화.
+- **회의 제어 모핑(16-4)**: 콘솔 컨트롤바에 ▶ 회의 시작 버튼 추가 — 트레이와 동일한 `context.start_meeting()` 경로로 시작하면 그 자리가 일시정지/정지로 전환되고, 종료 시 다시 시작 버튼으로 복귀.
+- **단일 회의 콘솔(16-1)**: Flow/Chat 두 최상위 오버레이를 한 창으로 통합하고 우측 Chat을 `›`/`‹` 토글로 접고 펼치게 했다.
+- **STT 성능(16-3)**: 벤치마크 하네스(`scripts/stt_benchmark.py`)로 정량 측정 후 튜닝.
+
+### 3. 시행착오와 의사결정
+- **16-1 — 새 클래스 대신 호스트 재사용(외과적 전환)**: 당초 계획은 신규 `MeetingConsole(TranslucentOverlay)`를 두고 FlowUI/ChatUI 둘 다 QWidget 패널로 바꾸는 것이었다. 그러나 그러면 FlowUI의 base가 바뀌어 `test_status`의 녹음·레이아웃 검증이 광범위하게 깨진다. Karpathy ③(외과적 수정)에 따라, **FlowUI를 그대로 콘솔 호스트로 유지**(크롬·녹음·시그널 보존)하고 **ChatUI만 QWidget로 전환**해 우측에 임베드하는 방식으로 조정했다(규칙 5대로 implementation_plan에 반영). 토글 접힘 판정은 창 표시 전에도 안전하도록 `isVisible()`이 아닌 `isHidden()` 기준으로 구현했다(테스트 가능성 확보).
+- **16-3 — 측정이 전제를 뒤집다(가장 중요한 교훈)**: "medium=정확도↑·약간 느림"이라는 가정으로 균형(medium+GPU)을 택했으나, 실회의 60초 슬라이스 측정 결과 **① 추론은 병목이 아니었고**(medium/GPU RTF 0.123, 실시간 8배), **② medium이 이 int8-OV 빌드에서 반복 디코딩 환각("아, ×20")을 일으켜 오히려 정확도가 나빴다**(small은 깨끗). 즉 사용자가 느낀 "느림"의 실제 원인은 모델이 아니라 **interim 전사가 0.5초마다 누적 버퍼 전체를 재전사**하던 구조였다. 이에 ⓐ interim을 최근 4초만 전사하도록 상한(반응성 상수화), ⓑ `collapse_repetitions`로 3회+ 연속 반복을 2회로 축약(환각 정리)했다. 두 개선 모두 모델 선택과 무관하게 유효하며, 데이터에 근거해 **기본 모델은 small 권장**으로 정리했다(상세: `docs/phase16_stt_benchmark.md`).
+
+### 4. 교훈
+- **추측 대신 측정(agent.md Karpathy ①)**: 사용자/나의 직관("medium이 더 정확")이 실측으로 반증됐다. 성능 작업은 가정으로 모델을 키우기 전에 반드시 정량 측정으로 병목을 특정해야 한다는 것을 다시 확인했다.
+- **외과적 전환의 가치(Karpathy ③)**: 더 "깔끔한" 새 클래스보다, 기존 호스트를 재사용하는 작은 변경이 테스트·시그널 배선 충격을 최소화하며 같은 사용자 가치를 냈다.
+- **체감 성능 ≠ 원시 처리량**: RTF가 작아도 0.5초마다 누적 재전사를 반복하면 체감은 느려진다. 비용을 발화 길이와 무관하게 상수화하는 것이 핵심이었다.
+
+
+---
+
+## 🚀 Phase 15: STT 상위 모델(medium/large-v3) 실배선 및 셋업 도구 (2026-06-21)
+
+### 1. 주요 구현 내용
 - **사전 점검으로 실제 공백 식별**: Phase 14-4에서 "기획"으로 남겨 둔 medium/large-v3 지원에 착수하며 먼저 현행 코드를 점검한 결과, 모델 크기→OpenVINO 디렉토리 매핑(`AppConfig.whisper_dir_name`), 설정 다이얼로그 콤보(tiny~large-v3) 및 설치 상태 라벨, `stt_agent._load_openvino_models`의 동적 로드까지 **배선은 이미 완비**되어 있음을 확인했습니다. 즉 진짜 빠진 것은 "상위 모델을 받을 수단"과 "미설치 선택 시의 안내"뿐이었습니다.
 - **출처 정합 발견**: 기존 `whisper-small-int8-ov` 번들의 README가 HuggingFace `OpenVINO` org의 사전 빌드 int8-ov 모델임을 가리키고 있었습니다. 같은 org가 `OpenVINO/whisper-medium-int8-ov`·`OpenVINO/whisper-large-v3-int8-ov`를 제공하므로, optimum/nncf 로컬 변환(무겁고 torch 의존) 없이 이미 설치된 `huggingface_hub`의 `snapshot_download`만으로 small과 동일한 출처·레이아웃을 그대로 재현할 수 있었습니다.
 - **셋업 스크립트(`scripts/setup_whisper_model.py`) 신설**: 모델 크기를 받아 `OpenVINO/whisper-{size}-int8-ov`를 `prismflow/resources/models/whisper-{size}-int8-ov`로 내려받습니다. `--list`로 설치 상태 일람, `--force`로 재다운로드, 이미 설치된 경우 멱등 skip을 지원하며, 순수 헬퍼(`repo_id_for`/`dir_name_for`/`target_dir_for`/`is_installed`)를 분리해 네트워크 없이 단위 테스트가 가능하도록 했습니다.

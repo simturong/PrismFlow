@@ -192,3 +192,21 @@
 - [x] 15-3: medium 모델(`whisper-medium-int8-ov`, ~760MB) 실설치 — 셋업 스크립트로 다운로드/배치 검증 (models/ 는 .gitignore 처리되어 미커밋)
 - [x] 15-4: 회귀 — `tests/test_setup_whisper.py` 신설(매핑이 `AppConfig.whisper_dir_name` 단일 정본과 일치 검증 등 6케이스), 전체 PyTest 무결성 유지
 
+## Phase 16: 통합 회의 콘솔 UI 재구성 및 STT 성능·정확도 향상 — ⏳ 구현 완료, 사용자 E2E 검증 대기
+> Phase 15 E2E 후 사용자 제기 6개 개선점. 결정: STT는 균형(medium+GPU), 6항목 단일 Phase 16. 상세: docs/implementation_plan.md Phase 16.
+- [x] 16-1: Flow+Chat 단일 콘솔 통합 + 우측 Chat `›`/`‹` 토글. **조정(외과적)**: 새 MeetingConsole 클래스 대신 FlowUI를 호스트로 유지(크롬/녹음/시그널 보존)하고 ChatUI만 base를 QWidget로 전환해 우측 임베드. main.py 단일 콘솔 배치·set_recording 단일화·tray 핸들러 정합. test_status 레이아웃 테스트 갱신 + 콘솔 토글 테스트 신설. 전체 94 passed/1 skip
+- [x] 16-2: 헤드라인 자막바 중앙정렬 + 폰트 2배(13→26px) + 핵심어(용어집/숫자·단위) 색상 강조 — `flow_ui._highlight_keywords` 단일스캔 안전 richtext, test_flow 8 passed
+- [x] 16-3: STT 성능 벤치마크(`scripts/stt_benchmark.py`+`tests/test_stt_benchmark.py`, 5 passed) + 실측. **발견(전제 반전)**: 추론은 병목 아님(medium/GPU RTF 0.123), 체감 지연은 interim 누적 재전사, medium은 본 int8-OV에서 반복 환각으로 오히려 정확도 저하. **개선**: interim 최근 4초 상한(반응성)+`collapse_repetitions` 반복환각 붕괴(정확도). 권장 기본=small. 리포트 `docs/phase16_stt_benchmark.md`
+- [x] 16-4: 회의 시작(▶ Play) 버튼을 컨트롤바에 추가 → 시작 시 일시정지/정지로 모핑(meeting_started/ended 토글), 트레이와 동일 start_meeting 경로 — 19 passed
+- [x] 16-5: Mermaid 폰트 2배(themeVariables fontSize 28px) + fade-in 전환 애니메이션 + 주제전환 시 새 subgraph 분기 프롬프트 강화 — test_flow 8 passed
+- [x] 16-6: CLI 디버그 분류 정리("Agent"→"Q&A(도구)", 범례 추가) + i2t는 로컬이라 CLI 로그 없음 안내 — `cli_activity`/`cli_log_window`/`test_cli_activity` 갱신, 5 passed
+- [x] 16-7: 회귀(`test_status`/`test_cli_activity`/`test_flow`/`test_stt` 갱신·신설, 전체 **100 passed/1 skip**) + 문서(history/task/plan/`phase16_stt_benchmark.md`) 동기화
+
+## Phase 17: 회의 제어 UX 재설계 · Mermaid 사용성/자유도 · 실시간 전사 개선 — 🚧 진행 중
+> Phase 16 E2E 후속 피드백. 모델 결론(사용자 지시): **기본 medium 확정, 빡세게 튜닝**. 상세: docs/implementation_plan.md Phase 17.
+- [ ] 17-1: 회의 제어 재설계 — ⏹ 정지(좌) + ▶/⏸ 재생-일시정지 토글(우) 상태기계(시작/재개/일시정지/정지)
+- [ ] 17-2: Mermaid 사용성·자유도 — 글자 잘림 해소(htmlLabels/패딩/폰트 재튜닝), 좌우 여백 활용(useMaxWidth/방향 자유), 맥락 기반 동적 구성(subgraph 의무·stale 노드 제거·압축, append 강제 탈피)
+- [ ] 17-3: STT 기본 medium 확정(빡센 튜닝) + interim 망각 해소(확정문장 누적+진행발화만 interim) + 확정 지연 단축(endpoint 재튜닝) + 반복 환각 억제 강화
+- [ ] 17-4: 채팅 토글 핸들을 상단 컨트롤바(녹음중 옆)로 이동 + 아이콘 교체 + 기본 여백 제거
+- [ ] 17-5: 회귀(test_status/test_flow 갱신, 전체 무결) + 문서 동기화
+

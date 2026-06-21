@@ -13,6 +13,7 @@ def test_agent_label_mapping():
     assert agent_label_for_session("flow-session-20260101_010101") == "Flow"
     assert agent_label_for_session("chat-session-abc") == "Chat"
     assert agent_label_for_session("report-session-xyz") == "Report"
+    assert agent_label_for_session("agent-session-tooluse") == "Q&A(도구)"
     assert agent_label_for_session(str(uuid.uuid4())) == "CLI"
     assert agent_label_for_session(None) == "CLI"
 

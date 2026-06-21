@@ -8,6 +8,39 @@ from .audio import MOCK_DIALOGUES, AudioCapture
 
 logger = logging.getLogger(__name__)
 
+import re as _re
+
+_REPEAT_PUNCT = _re.compile(r"[\s,\.!?~\-…]+$")
+
+
+def collapse_repetitions(text: str, max_run: int = 2) -> str:
+    """연속으로 동일하게 반복되는 토큰을 최대 max_run개로 줄여 반복 환각을 제거한다.
+
+    Whisper(특히 int8 양자화 medium)는 필러/무음에서 "아, 아, 아, …"처럼 같은 토큰을
+    수십 번 되풀이하는 디코딩 루프에 빠지곤 한다. 자연스러운 2회 반복("네 네")은 보존하고
+    3회 이상 연속 동일 토큰만 잘라낸다(구두점 차이는 무시하고 비교).
+    """
+    if not text:
+        return text
+    tokens = text.split()
+    if len(tokens) < max_run + 1:
+        return text
+    out = []
+    run_key = None
+    run_len = 0
+    for tok in tokens:
+        key = _REPEAT_PUNCT.sub("", tok)
+        if key and key == run_key:
+            run_len += 1
+            if run_len > max_run:
+                continue  # 초과 반복은 버림
+        else:
+            run_key = key
+            run_len = 1
+        out.append(tok)
+    return " ".join(out)
+
+
 class RealTimeEngineWorker(QThread):
     status_changed = Signal(str) # "running", "idle", "error"
     error_occurred = Signal(str)
@@ -142,7 +175,7 @@ class RealTimeEngineWorker(QThread):
         if self.whisper_model is not None:
             try:
                 res = self.whisper_model.generate(audio_window, self._whisper_cfg)
-                return str(res).strip()
+                return collapse_repetitions(str(res).strip())
             except Exception as e:
                 logger.debug(f"Interim Whisper inference error: {e}")
         return ""
@@ -162,6 +195,11 @@ class RealTimeEngineWorker(QThread):
         endpoint_samples = int(1.0 * sr)   # 발화 후 1.0초 무음이면 종료(문장 중간 pause 파편화 방지)
         min_utt_samples = int(0.6 * sr)    # 0.6초 미만 발화는 잡음/초단 파편으로 간주해 폐기
         max_utt_samples = int(20.0 * sr)   # 백프레셔: 20초 초과 발화는 강제 분절
+        # 실시간 임시 전사는 발화 누적 전체가 아니라 최근 4초만 전사한다.
+        # (발화가 길어질수록 매 0.5초 interim이 전체를 재전사해 GPU 부하/지연이 누적되는 것을 방지.
+        #  벤치 RTF는 작지만 interim이 0.5초마다 누적버퍼를 반복 전사하는 것이 체감 지연의 핵심이었음.
+        #  최종 전사는 finalize에서 발화 전체를 1회 정확히 전사하므로 정확도 손실 없음.)
+        interim_window_samples = int(4.0 * sr)
 
         utt = []                  # 현재 발화 버퍼(청크 리스트)
         in_speech = False
@@ -235,7 +273,7 @@ class RealTimeEngineWorker(QThread):
                 interim_sample_count += len(chunk)
                 if interim_sample_count >= int(0.5 * sr):
                     interim_sample_count = 0
-                    audio_so_far = np.concatenate(utt).astype(np.float32)
+                    audio_so_far = np.concatenate(utt).astype(np.float32)[-interim_window_samples:]
                     if len(audio_so_far) >= min_utt_samples:
                         interim_text = self._process_interim_inference(audio_so_far)
                         if interim_text:
@@ -253,7 +291,7 @@ class RealTimeEngineWorker(QThread):
                 interim_sample_count += len(chunk)
                 if interim_sample_count >= int(0.5 * sr):
                     interim_sample_count = 0
-                    audio_so_far = np.concatenate(utt).astype(np.float32)
+                    audio_so_far = np.concatenate(utt).astype(np.float32)[-interim_window_samples:]
                     if len(audio_so_far) >= min_utt_samples:
                         interim_text = self._process_interim_inference(audio_so_far)
                         if interim_text:
@@ -389,6 +427,8 @@ class RealTimeEngineWorker(QThread):
             try:
                 res = self.whisper_model.generate(audio_window, self._whisper_cfg)
                 text = str(res).strip()
+                # 반복 디코딩 루프(예: "아, 아, 아, …") 환각 제거
+                text = collapse_repetitions(text)
             except Exception as e:
                 self.error_occurred.emit(f"Whisper 추론 오류: {str(e)}")
                 return "Speaker_00", ""

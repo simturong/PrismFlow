@@ -1,9 +1,10 @@
 import os
+import re
 import base64
 import html
 import logging
 from pathlib import Path
-from PySide6.QtWidgets import QVBoxLayout, QTextBrowser, QLabel
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QTextBrowser, QLabel
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -36,6 +37,14 @@ _TRANSCRIPT_STYLE = """
 # 전사 기록 뷰에 보관할 최대 라인 수 (메모리/렌더 비용 상한)
 _MAX_TRANSCRIPT_LINES = 50
 
+# 헤드라인 핵심어 강조용 숫자/날짜/수량 토큰 패턴 (예: 30%, 2026년, 3일, 5개, 1,200, 12:30, 3.5억)
+# 한글 단위/접미어를 함께 묶어 '5개', '2026년'처럼 의미 단위로 강조한다.
+_NUMERIC_PATTERN = (
+    r"\d[\d,\.:]*\s?%"                       # 퍼센트
+    r"|\d[\d,\.:]*\s?(?:년|월|일|시|분|초|개|명|건|원|억|만|천|배|차|위|등|km|kg|m|cm)"  # 수량+단위
+    r"|\d[\d,\.:]*\d|\d"                     # 일반 숫자(천단위/소수/시각 포함)
+)
+
 
 class FlowUI(TranslucentOverlay):
     """흐름도(블록도)가 세로의 ~90%를 차지하고, 그 아래 얇은 확정 전사 스트립 + 한 줄 에이전트 상태를 둔 투명 오버레이.
@@ -43,22 +52,26 @@ class FlowUI(TranslucentOverlay):
     창 이름은 'PrismFlow Agent'로, 좌상단에 떠 있는 라벨로 표기한다.
     """
 
-    def __init__(self, hub=None, parent=None):
+    def __init__(self, hub=None, parent=None, chat_panel=None):
         super().__init__(parent)
         self.setWindowTitle("PrismFlow Agent")
-        self.resize(700, 680)
         self.hub = hub
+        self.chat_panel = chat_panel
         self._transcript_lines = []
         self._interim_text = ""
 
-        # 내부 레이아웃: 흐름도(블록도)가 세로의 ~90%를 차지하고, 전사 기록과 에이전트 상태는 최소 높이.
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 32, 10, 8)
+        # 좌측 Flow 콘텐츠를 담는 컨테이너. (chat_panel이 주어지면 우측에 분할 배치)
+        left = QWidget(self)
+        layout = QVBoxLayout(left)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        # [0] 뉴스 요약 자막바 (News Headline Label)
+        # [0] 뉴스 요약 자막바 (News Headline Label) — 중앙정렬·대형 폰트(2배)·핵심어 색강조
         self.headline_label = QLabel("회의 흐름을 실시간 요약 중입니다...", self)
-        self.headline_label.setFixedHeight(30)
+        self.headline_label.setFixedHeight(56)
+        self.headline_label.setWordWrap(True)
+        self.headline_label.setAlignment(Qt.AlignCenter)
+        self.headline_label.setTextFormat(Qt.RichText)
         self.headline_label.setStyleSheet(
             "background-color: rgba(124, 77, 255, 30);"
             "color: #ffcc00;"
@@ -66,7 +79,7 @@ class FlowUI(TranslucentOverlay):
             "border-radius: 4px;"
             "padding: 2px 10px;"
             "font-family: 'Pretendard', sans-serif;"
-            "font-size: 13px;"
+            "font-size: 26px;"
             "font-weight: bold;"
         )
         layout.addWidget(self.headline_label, 0)
@@ -89,6 +102,32 @@ class FlowUI(TranslucentOverlay):
         self.status_panel = AgentStatusPanel(hub=hub, parent=self)
         self.status_panel.setFixedHeight(28)
         layout.addWidget(self.status_panel, 0)
+
+        # 외곽 좌/우 분할: 좌=Flow 콘텐츠(stretch), [토글], 우=Chat 패널(옵션, 접기/펼치기)
+        outer = QHBoxLayout(self)
+        outer.setContentsMargins(10, 32, 10, 8)
+        outer.setSpacing(6)
+        outer.addWidget(left, 1)
+
+        if self.chat_panel is not None:
+            # 얇은 세로 토글 핸들 ( '>' 접기 / '<' 펼치기 )
+            self.chat_toggle_btn = QPushButton("›", self)
+            self.chat_toggle_btn.setFixedWidth(18)
+            self.chat_toggle_btn.setToolTip("채팅 패널 접기/펼치기")
+            self.chat_toggle_btn.setStyleSheet(
+                "QPushButton { background: rgba(124,77,255,0.18); color:#e2e8f0;"
+                " border:1px solid rgba(255,255,255,0.10); border-radius:6px; font-size:14px; font-weight:bold; }"
+                " QPushButton:hover { background: rgba(124,77,255,0.40); }"
+            )
+            self.chat_toggle_btn.clicked.connect(self.toggle_chat_panel)
+            outer.addWidget(self.chat_toggle_btn, 0)
+
+            self.chat_panel.setFixedWidth(420)
+            outer.addWidget(self.chat_panel, 0)
+            self.resize(700 + 18 + 420, 680)
+        else:
+            self.chat_toggle_btn = None
+            self.resize(700, 680)
 
         # 좌상단에 떠 있는 창 이름(레이아웃 공간을 차지하지 않도록 절대 배치) — 흐름도 90% 확보에 기여
         self.title_label = QLabel("PrismFlow Agent", self)
@@ -152,6 +191,23 @@ class FlowUI(TranslucentOverlay):
         sb = self.transcript_view.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    # -------------------- 채팅 패널 토글 --------------------
+    def toggle_chat_panel(self):
+        """우측 Chat 패널을 접고 펼친다(`›`/`‹`). 접으면 Flow가 전폭을 차지한다."""
+        if self.chat_panel is None:
+            return
+        # isHidden(): 명시적으로 숨김 처리됐는지(창 표시 여부와 무관) → 토글 판정에 안전
+        show = self.chat_panel.isHidden()
+        self.set_chat_visible(show)
+
+    def set_chat_visible(self, visible: bool):
+        if self.chat_panel is None:
+            return
+        self.chat_panel.setVisible(visible)
+        if self.chat_toggle_btn is not None:
+            self.chat_toggle_btn.setText("›" if visible else "‹")
+            self.chat_toggle_btn.setToolTip("채팅 패널 접기" if visible else "채팅 패널 펼치기")
+
     # -------------------- 상태 / 다이어그램 --------------------
     def update_status_text(self, text: str):
         """(하위호환) 엔진 상태 텍스트를 STT 뱃지 상세에 반영한다(점 색 상태는 유지)."""
@@ -168,9 +224,38 @@ class FlowUI(TranslucentOverlay):
         self.headline_label.setText("회의 흐름을 실시간 요약 중입니다...")
 
     def update_headline(self, text: str):
-        """실시간 뉴스 헤드라인 자막을 갱신합니다."""
+        """실시간 뉴스 헤드라인 자막을 핵심어 강조와 함께 갱신합니다."""
         if text:
-            self.headline_label.setText(text)
+            self.headline_label.setText(self._highlight_keywords(text))
+
+    def _highlight_keywords(self, text: str) -> str:
+        """핵심 단어(숫자·날짜·수량 + 회의 용어집 매칭어)를 색상 span으로 감싼 안전한 richtext를 만든다.
+
+        규칙 기반(LLM 비의존)·결정적. 원문 위에서 단 한 번 스캔하여 매칭 구간만 강조하고 나머지는
+        그대로 이스케이프하므로, 삽입된 마크업(색상 hex 등)을 재치환하는 사고가 없다.
+        """
+        hi = "<span style='color:#5eead4;'>{}</span>"  # 청록 강조
+
+        # 회의 용어집(화면 추출 도메인 용어) — best-effort, 실패해도 무시
+        try:
+            terms = self.context._db_manager.get_glossary_terms() if self.context else None
+        except Exception:
+            terms = None
+        # 숫자 패턴 + (긴 용어부터) 용어집 패턴을 하나의 alternation으로 결합해 단일 스캔
+        pattern = _NUMERIC_PATTERN
+        if terms:
+            uniq = sorted({t for t in terms if t and len(t) >= 3}, key=len, reverse=True)
+            if uniq:
+                pattern += "|" + "|".join(re.escape(t) for t in uniq)
+        combined = re.compile(pattern)
+
+        out, last = [], 0
+        for m in combined.finditer(text):
+            out.append(html.escape(text[last:m.start()]))
+            out.append(hi.format(html.escape(m.group(0))))
+            last = m.end()
+        out.append(html.escape(text[last:]))
+        return "".join(out)
 
     def update_engine_mode(self, mode: str):
         """좌상단 타이틀 옆에 엔진 모드 (Claude 또는 Local)를 동적으로 표시합니다."""

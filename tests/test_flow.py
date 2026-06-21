@@ -32,7 +32,55 @@ def test_flow_ui_init(q_app):
     assert "Claude" in ui.title_label.text()
     ui.update_engine_mode("Local")
     assert "Local" in ui.title_label.text()
-    
+
+    ui.close()
+
+
+def test_flow_ui_embedded_chat_toggle(q_app):
+    """Phase 16: chat_panel을 주면 우측에 임베드되고 토글로 접고 펼칠 수 있다."""
+    from PySide6.QtWidgets import QWidget
+    chat = QWidget()
+    ui = FlowUI(chat_panel=chat)
+    try:
+        # 임베드 + 토글 버튼 생성, 기본 펼침(숨김 아님)
+        assert ui.chat_panel is chat
+        assert ui.chat_toggle_btn is not None
+        assert chat.isHidden() is False
+        # 접기 → 숨김, 글리프 전환
+        ui.toggle_chat_panel()
+        assert chat.isHidden() is True
+        assert ui.chat_toggle_btn.text() == "‹"
+        # 다시 펼치기
+        ui.toggle_chat_panel()
+        assert chat.isHidden() is False
+        assert ui.chat_toggle_btn.text() == "›"
+    finally:
+        ui.close()
+
+
+def test_flow_ui_no_chat_panel_default(q_app):
+    """chat_panel 미지정 시 단독 Flow로 동작(토글 버튼 없음)."""
+    ui = FlowUI()
+    try:
+        assert ui.chat_panel is None
+        assert ui.chat_toggle_btn is None
+    finally:
+        ui.close()
+
+
+def test_flow_ui_headline_keyword_highlight(q_app):
+    """헤드라인 핵심어 강조: 숫자/수량 토큰은 색상 span으로 감싸고, HTML은 안전하게 이스케이프한다."""
+    ui = FlowUI()
+    out = ui._highlight_keywords("예산 30% 증액, 2026년 3건 승인")
+    # 숫자/수량 토큰 강조
+    assert "<span" in out and "30%" in out and "2026년" in out and "3건" in out
+    # 평문 부분은 보존
+    assert "예산" in out and "승인" in out
+
+    # HTML 특수문자 안전 처리 (마크업 주입 방지)
+    safe = ui._highlight_keywords("a<b>&c 5개")
+    assert "<b>" not in safe and "&lt;b&gt;" in safe and "&amp;c" in safe
+    assert "5개" in safe
     ui.close()
 
 def test_screen_detector_generic_fallback(q_app):

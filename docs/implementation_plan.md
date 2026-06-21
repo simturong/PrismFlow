@@ -1134,10 +1134,84 @@ endlocal
 .venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q
 ```
 
+---
 
+### Phase 16: 통합 회의 콘솔 UI 재구성 및 STT 성능·정확도 향상
 
+> **배경**: Phase 15(medium 실배선) 직후 사용자가 실제 회의로 E2E를 돌려 6개 개선점을 제기했다.
+> 두 갈래 — ①UX 통합·가독성(Flow/Chat 창 분리·작은 폰트·비직관 회의제어·혼란스러운 CLI 디버그 분류),
+> ②STT 성능(전사 느림·정확도 아쉬움). 정량 지표를 세우고 끌어올린다.
+> **결정(사용자 확인 2026-06-21)**: ⓐ STT는 **균형 — medium + GPU 최적화**(정확도↑, 반응성은 GPU/튜닝으로 회복,
+> 벤치마크로 전후 정량화). ⓑ 6개 항목을 **단일 Phase 16**으로 묶는다.
+> **현황 메모**: DB가 테스트로 `whisper_model_size=medium`, `stt_mock_mode=false` 상태(medium이 small보다 느린 것이 "느림" 체감에 일부 기여).
 
+#### 현행 구조 요약 (착수 전 탐색 결과)
+*   `FlowUI`(=PrismFlow Agent, `flow_ui.py`)와 `ChatUI`(=Chat Agent, `chat_ui.py`)는 **각각 별도 최상위 창**이며 둘 다 `TranslucentOverlay`(`overlay.py`) 상속 → 드래그·호버페이드·우상단 컨트롤바(최소화/닫기 + 숨김 `btn_pause`/`btn_stop`)·녹음 인디케이터 공유. **회의 "시작" 버튼은 창에 없고 트레이 메뉴에만 존재**.
+*   `main.py` `AppCoordinator`가 두 창을 생성·개별 배치하고 모든 시그널을 배선. `tray.set_ui_handlers(flow_ui, chat_ui, cli_log_window)`.
+*   `mermaid_html.py`: `themeVariables`에 폰트 크기 미지정(기본 ~16px), `updateDiagram()`이 `innerHTML` 즉시 교체(전환 애니메이션 없음).
+*   `flow_agent.py`: `_should_trigger` 3-way(최초 즉시/버스트=주제전환 8초 바닥/정기 30초), 프롬프트 규칙4에 주제전환 시 subgraph 그룹화 지시 **이미 존재**. 헤드라인은 `summary_updated`로 방출.
+*   `stt_agent.py`: VAD 엔드포인트 1.0초 무음, 15초 강제분절, interim 전사 존재. `_detect_device()` GPU→CPU.
+*   CLI 디버그(`cli_log_window.py`+`cli_activity.py`): 라벨이 **세션 접두사**로 결정(`agent-session`→"Agent"=도구증강 Q&A, 그 외→"CLI"=미분류 폴백). **i2t(화면감지)는 Claude CLI 미사용 로컬 모듈이라 CLI 로그가 없음** → 사용자가 디버그 창에서 못 찾은 이유.
 
+#### 개발 범위
+| 항목 | 대상 파일 | 작업 내용 |
+|:---|:---|:---|
+| **16-1** 단일 콘솔 통합 + 채팅 토글 | `flow_ui.py`, `chat_ui.py`, `main.py`, `tray.py` | **조정된 외과적 구현(Karpathy ③)**: 당초 신규 `MeetingConsole` 클래스를 두려 했으나, 그러면 FlowUI base 변경 + `test_status`(녹음·레이아웃) 광범위 파손이 불가피했다. 대신 **FlowUI를 그대로 단일 콘솔의 호스트**로 유지(TranslucentOverlay 크롬·녹음·회의 시그널·`set_recording` 보존)하고, **ChatUI만 base를 `TranslucentOverlay`→`QWidget`(임베드 패널)** 로 전환한다. FlowUI는 `chat_panel` 옵션을 받아 `QHBoxLayout`[좌 Flow 콘텐츠(stretch) · 얇은 토글 핸들 `›`/`‹` · 우 Chat 패널(고정폭 420)]로 재배치하고 `toggle_chat_panel`/`set_chat_visible` 제공(접힘 판정은 `isHidden()` 기준 → 창 표시 전에도 테스트 가능). `main.py`는 `chat_agent`→`ChatUI`(패널)→`FlowUI(chat_panel=...)` 순으로 생성, `self.flow_ui`/`self.chat_ui`는 그대로 두어 기존 시그널 배선 보존, 콘솔 1개 배치·`set_recording` 단일화, `tray.set_ui_handlers(flow_ui, flow_ui, ...)`. 공개 메서드 시그니처 전부 보존. |
+| **16-2** 헤드라인 중앙·2배폰트·핵심어 강조 | `flow_ui.py`(통합 후 Flow 패널), `core/glossary.py`(조회 재사용) | 헤드라인 자막바: `AlignCenter`, font 13→26px, 높이 30→~56px, 워드랩. `update_headline(text)`를 richtext로 변환해 **회의 용어집/교정사전 용어 + 숫자·날짜 토큰**을 `<span style="color:#ffd54a">`로 래핑(결정적 규칙 기반, LLM 비의존). 매칭 없으면 평문. |
+| **16-3** STT 성능 지표 + 반응성·정확도(균형) | `scripts/stt_benchmark.py` [NEW], `tests/test_stt_benchmark.py` [NEW], `stt_agent.py`, `config.py`(필요 시) | 측정 하네스: 지표 ① RTF(오디오초/추론초) ② 엔드포인트→`transcript_updated` 지연 ③ 정확도 프록시(고정 한국어 WAV의 기준 텍스트 대비 CER/WER). small vs medium · CPU vs GPU 대조표(opt-in `STT_LIVE`). 측정 기반 튜닝: GPU 우선 강제 확인, VAD 엔드포인트·interim 주기·15초 강제분절·`vad_threshold` 재조정(**값은 측정 후 확정, 계획에 고정값 미기재**). 정확도: medium 기본 + 교정사전·환각 블랙리스트 경로 유지/강화. **목표: small 베이스라인 대비 CER 10%↓ 또는 동일 정확도서 지연 10%↓ 중 측정으로 달성 가능한 축을 명시(상충 사실 정직 기록).** |
+| **16-4** 회의 시작 버튼 → 일시정지/정지 모핑 | `overlay.py`(콘솔 컨트롤바), `tray.py`/`main.py` 정합 | `btn_start`(▶ Segoe MDL2) 추가 — 회의 비활성 시 표시, 클릭 시 `context.start_meeting()`(트레이 시작과 동일 경로 재사용). `meeting_started`→start 숨김+pause/stop 표시, `meeting_ended`→역전. 트레이 회의 시작/종료는 유지(이중 진입점). |
+| **16-5** Mermaid 다이나믹·2배폰트·주제전환 갱신 | `mermaid_html.py`, `flow_agent.py` | `themeVariables.fontSize` ~2배(예 `24px`), `updateDiagram()`에 opacity/transform 페이드 전환(컨테이너 `transition`+신규 SVG fade-in). 주제전환: 프롬프트 규칙4를 "**대주제 전환 시 새 subgraph로 명확히 분기**"로 강화, 필요 시 `burst_threshold`/`min_interval_sec` 미세조정(체감 속도). |
+| **16-6** CLI 디버그 분류 정리 + i2t 표기 | `cli_activity.py`, `cli_log_window.py`, `tests/test_cli_activity.py` | `agent_label_for_session`: `agent-session`→"Q&A(도구)"로 명칭 변경(의미 명시), "CLI" 폴백은 주석/툴팁 보강. 필터 콤보를 `전체/Flow/Chat/Q&A(도구)/Report` 위주로 재정렬 + 상단 짧은 **범례**. **i2t는 로컬(화면감지)이라 CLI 로그가 없음**을 범례 한 줄로 안내하고, i2t 상태는 상태패널(`status_panel`)의 i2t 뱃지로 본다는 점 명기. |
+| **16-7** 회귀·문서 | `tests/`, `docs/` | UI 리팩토링으로 깨지는 `test_ui`/`test_chat`/`test_cli_activity` 갱신, 전체 `pytest tests/` 무결. `docs/phase16_stt_benchmark.md`(전/후 표)·history·task 동기화. |
 
+#### 구현 순서(권장)
+16-6(저위험·독립) → 16-2·16-5(렌더/스타일·독립) → 16-4(컨트롤바) → 16-1(최대 리팩토링; 앞 변경을 패널로 흡수) → 16-3(측정·튜닝 반복) → 16-7(회귀·문서).
+
+#### 비-목표(Non-goal)
+*   신규 번역 기능 없음(사용자의 "번역성"은 **전사 정확도**로 해석).
+*   large-v3 기본 채택 안 함(설정에서 선택 가능, 배선은 Phase 15 완료분 재사용).
+*   "10% 향상"의 양축(정확도·반응성) 동시 보장은 medium↔속도 상충으로 보장 불가 → 측정으로 달성 가능한 축을 정해 수치로 정직히 보고(과약속 금지).
+
+#### ReAct 검증
+*   단위/회귀: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q` (신규 벤치 포함 전부 통과).
+*   수동 E2E(클린 재기동): 단일 콘솔에 좌 Flow/우 Chat → `>`/`<` 토글 → 헤드라인 중앙·대형·핵심어 색 → 창 ▶시작으로 회의 시작 → 일시정지/정지 모핑 → 한국어 발화 반응성 → 주제 전환 시 Mermaid 새 subgraph 전환(큰 폰트·페이드) → Chat 질의응답 → 정지 시 보고서 생성.
+*   STT 정량: `scripts/stt_benchmark.py` 대조표 → `docs/phase16_stt_benchmark.md`에 전/후·10% 목표 달성 여부 기록.
+*   관측 한계: 앱은 uv venv 트램폴린이라 stdout 캡처 불가 → DB 전사/세션 출력물(WAV/TXT/MD)·보고서로 검증(Phase 15 E2E 방식).
+
+---
+
+### Phase 17: 회의 제어 UX 재설계 · Mermaid 사용성/자유도 · 실시간 전사 개선
+
+> **배경**: Phase 16 사용자 E2E 후 후속 피드백(2026-06-21). 단일 콘솔/헤드라인/CLI 분류/엔진모드는 정상 동작했으나,
+> ①회의 제어 버튼 동작이 직관과 다르고 ②Mermaid가 글자 잘림·세로 나열식·좌우 여백 과다·subgraph 미출현으로 가독성이 나쁘며
+> ③실시간 전사가 늦고(확정 지연) interim이 앞 문장을 잃고 ④채팅 토글 핸들 아이콘/위치/기본 여백이 거슬린다는 지적.
+> **모델 결론(2026-06-21 사용자 지시)**: 기본 **medium 확정 — 빡세게 목표 잡고 튜닝**한다. (Phase 16-3 실측에서 medium은 확정 지연·반복 환각 위험이 있었으나, 정확도 잠재력을 살리는 방향으로 ⓐ`collapse_repetitions` 반복 환각 억제 ⓑinterim 망각 해소 ⓒendpoint 단축으로 medium의 약점을 공격적으로 보정한다.)
+
+#### 현행 한계 (E2E 관찰 근거)
+*   **회의 제어**: Phase 16-4에서 ▶시작 버튼이 시작 시 pause/stop으로 "전환"되도록 했으나, 사용자는 **▶↔⏸ 토글(재생/일시정지)** + **별도 ⏹ 정지(좌측)** 모델을 원함. 현재 3버튼 구성이 직관과 어긋남.
+*   **Mermaid**: Haiku가 `graph TD` 선형 체인(A→B→C…)만 생성 → 화면이 세로로 길고 좌우 여백이 큼. 노드 박스가 폰트(28px)보다 작아 한국어가 잘림(`htmlLabels`/패딩 부재). 프롬프트가 Upsert(append) 위주라 stale 노드가 계속 쌓이고 subgraph가 사실상 안 나옴.
+*   **실시간 전사**: Phase 16-3의 interim 4초 윈도우가 **라이브 자막에서 발화 앞부분을 잃게 함**(사용자 "수정 앞 문장을 까먹는다"). 또한 endpoint 1.0초 + 긴 발화로 **확정 전사가 늦게** 뜸.
+*   **채팅 토글**: 우측 중앙의 `›`/`‹` 핸들 아이콘이 투박하고, 기본(펼침) 상태에서 핸들 주변 여백이 거슬림. 사용자는 핸들을 **상단 컨트롤바(녹음중 옆)로 이동**하고 아이콘 교체를 원함.
+
+#### 개발 범위
+| 항목 | 대상 파일 | 작업 내용 |
+|:---|:---|:---|
+| **17-1** 회의 제어 재설계(상태기계) | `overlay.py`, `tray.py`/`main.py` 정합 | 컨트롤바를 **⏹ 정지(좌) + ▶/⏸ 재생-일시정지 토글(우)** 2버튼으로 재정리. 상태기계: (비활성)→▶클릭=회의 시작→⏸ 표시 / ⏸클릭=일시중지→▶ 표시 / ▶클릭=재개→⏸ / ⏹클릭=종료→(비활성, ▶). 정지는 회의 중에만 활성. `context.start_meeting`/`toggle_pause`/`end_meeting` 재사용, 기존 btn_start/btn_pause/btn_stop을 이 모델로 통합. |
+| **17-2** Mermaid 사용성·자유도 | `mermaid_html.py`, `flow_agent.py` | (a) **글자 잘림 해소**: `flowchart`에 `htmlLabels:true`+노드 패딩 확대+`white-space` 래핑, 폰트는 가독 범위(예 20~22px)로 재튜닝(28px가 박스를 넘쳤음). (b) **여백 활용**: `useMaxWidth:true`+컨테이너 꽉 채움, 선형 체인이 세로로만 길지 않도록 **방향/그룹핑을 모델이 자유 선택**(TD/LR 혼용·subgraph 열 배치 허용). (c) **맥락 기반 동적 구성**: Flow 프롬프트를 append-Upsert 강제에서 **"사용성 우선 자유 재구성"**으로 전환 — 대주제별 subgraph 그룹핑 의무화, **불필요·종료된 화제 노드는 제거 허용**, 최신 흐름이 한눈에 들어오도록 압축(노드 수 상한·핵심만). 자유도는 높이되 출력 형식(요약===mermaid)·화자배제 규칙은 유지. |
+| **17-3** STT 기본 medium(빡센 튜닝) + 실시간 전사 개선 | `config.py`(또는 DB), `stt_agent.py` | 기본 모델 **medium** 확정(DB `whisper_model_size=medium`)하고 medium의 약점을 공격적으로 보정. **interim 망각 해소**: 라이브 자막을 "확정 문장 누적 + 진행 중 발화만 interim"으로 바꿔 발화 앞부분이 사라지지 않게(16-3의 4초 윈도우가 앞을 자르던 문제 보정 — 누적 표시/문장 commit 방식). **확정 지연 단축**: endpoint(1.0초)·min_utt·강제분절을 medium 기준으로 재튜닝(medium은 추론이 small보다 무거우므로 interim 빈도/윈도우와 endpoint의 균형을 실측으로 잡음). **환각 억제**: `collapse_repetitions` 유지·강화(medium 반복 루프 대응). medium RTF(GPU 0.123)는 실시간 8배라 처리량은 충분 — 체감 지연은 interim/endpoint 구조 개선으로 잡는다. |
+| **17-4** 채팅 토글 핸들 이동·아이콘·여백 | `flow_ui.py`, `overlay.py` | 토글 핸들을 우측 중앙에서 제거하고 **상단 컨트롤바(녹음중 옆)** 에 채팅 표시/숨김 토글 버튼으로 이동, 아이콘 교체(말풍선/패널 아이콘 등). 기본 상태에서 핸들 컬럼이 차지하던 **여백 제거**(접힘 시 Flow가 자연스럽게 전폭). |
+| **17-5** 회귀·문서 | `tests/`, `docs/` | 컨트롤 상태기계·토글 위치 변경에 맞춰 `test_status`/`test_flow` 갱신, 전체 `pytest` 무결. history/task/plan 동기화. |
+
+#### 구현 순서(권장)
+17-4(토글 이동, 저위험) → 17-1(제어 상태기계) → 17-2(Mermaid, 프롬프트+CSS 반복) → 17-3(STT 실시간 개선) → 17-5(회귀·문서).
+
+#### 비-목표 / 트레이드오프
+*   Mermaid "자유도"는 출력 계약(요약 `===` mermaid, 코드펜스 금지, 화자 배제)과 오프라인 폴백 룰은 유지하는 선에서의 자유다(파서 안정성 보전).
+*   기본 모델은 medium(사용자 지시). small/large는 설정에서 선택 유지.
+*   "확정 지연 단축"은 endpoint를 너무 줄이면 문장 중간 끊김이 늘어나는 상충이 있어, 체감과 분절 안정성의 균형점을 실측으로 잡는다(과약속 금지).
+
+#### ReAct 검증
+*   단위/회귀: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q`.
+*   수동 E2E: ⏹+▶/⏸ 토글 동작 → Mermaid 글자 안 잘림·여백 활용·subgraph/그룹 출현·stale 노드 정리 → 한국어 발화 시 확정이 빠르고 앞 문장 유지되는지 → 토글이 상단바에서 동작·기본 여백 없음.
 
 
