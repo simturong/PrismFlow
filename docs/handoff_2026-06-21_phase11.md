@@ -1,13 +1,25 @@
 # PrismFlow 이어받기 핸드오프 (2026-06-21 세션 2, Phase 11 = 앱 실행 UX 수정)
 
 ## 현재 상태 (한 줄)
-`master`, 마지막 커밋 **5d4e96b**. 테스트 **75 passed / 1 skipped**, 전체 스위트 **3회 연속 무결**(세그폴트 0), 실제 앱 구동 스모크 rc=0. 작업 트리 클린.
+`master`, 마지막 커밋 **8bce94d**. 테스트 **76 passed / 1 skipped**, 전체 스위트 **3회 연속 무결**(세그폴트 0), 실제 앱 구동 스모크 rc=0. 작업 트리 클린.
 
-## 이번 세션 커밋 (Phase A~D)
+## 이번 세션 커밋 (Phase A~E + 프리즈 수정)
 - `5c1477e` Phase A 오버레이 UX: 녹음표시 우상단 이동, 항상위 해제, 투명도 슬라이더, 흐름도 성장 리사이즈
 - `4e64918` Phase B Flow 실시간성: 버스트 트리거(15초 정기 + 8초 주제전환 바닥)
 - `8b4ccb3` Phase C CLI 디버그 로그 창 (백그라운드 에이전트 ↔ claude 주고받기)
 - `5d4e96b` Phase D Assistant 회의정보 스트립 + 범용 도구 모드 토글
+- `445a16e` 회의정보를 타이틀 행에 합침(줄 낭비 제거)
+- `c7d0f05` Phase E 실행 피드백: 창 이름(PrismFlow Agent/Chat Agent), Flow 흐름도 ~90%·상태 한 줄,
+  CLI 로그 실시간(요청 즉시/응답 분리), 세션 'already in use' 수정, 범용작업을 회의 Q&A로 통합(작업폴더 선택)
+- `8bce94d` 회의 종료 UI 프리즈 수정: FlowAgent 바운드 stop + 백그라운드 배수(drain)
+
+## Phase E·프리즈 핵심
+- **창 이름**: Flow="PrismFlow Agent"(좌상단 떠있는 라벨), Chat="PrismFlow Chat Agent". windowTitle 일치.
+- **Flow ~90%**: web_view만 신축 영역, 전사 얇은 스트립, `AgentStatusPanel` 가로 한 줄.
+- **CLI 로그 실시간**: `record_request`(보낸 즉시)/`record_response`(완료) 분리 → 입력이 출력 전에 보임.
+- **세션 충돌 수정**: 세션을 오염시키던 프로브 제거, `cli_controller._created_sessions`(최초 --session-id, 이후 --resume) + 충돌 시 --resume 폴백. 실 CLI 2연속 질의 검증.
+- **범용작업 통합**: 모드 토글/agent-session 제거. 단일 chat-session이 회의 맥락 주입 + 웹/파일 도구를 작업폴더 샌드박스로 함께 사용. 작업폴더는 📁버튼으로 지정 → DB `settings.workspace_dir`.
+- **프리즈 수정**: `FlowAgent.stop(wait_ms)` 바운드 + `AppCoordinator._retire_flow_agent`가 진행 중이면 신호 끊고 `_draining`로 배수(참조 유지). 8초 in-flight 호출에도 종료 블록 ~266ms.
 
 ## 사용자 요청(P1~P8) 처리 결과 — 전부 완료
 1. **P1 녹음중 위치**: 좌상단 → 우상단 컨트롤 묶음(최소화 버튼 왼쪽)으로 이동.
