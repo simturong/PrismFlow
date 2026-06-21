@@ -4,7 +4,7 @@ import base64
 import html
 import logging
 from pathlib import Path
-from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QTextBrowser, QLabel
+from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QWidget, QTextBrowser, QLabel
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -103,30 +103,20 @@ class FlowUI(TranslucentOverlay):
         self.status_panel.setFixedHeight(28)
         layout.addWidget(self.status_panel, 0)
 
-        # 외곽 좌/우 분할: 좌=Flow 콘텐츠(stretch), [토글], 우=Chat 패널(옵션, 접기/펼치기)
+        # 외곽 좌/우 분할: 좌=Flow 콘텐츠(stretch), 우=Chat 패널(옵션). 토글은 상단 컨트롤바의 채팅 버튼이 담당
+        # (중앙 세로 핸들을 두지 않아 접힘 시 불필요한 여백 컬럼이 생기지 않는다 — Phase 17-4).
         outer = QHBoxLayout(self)
         outer.setContentsMargins(10, 32, 10, 8)
         outer.setSpacing(6)
         outer.addWidget(left, 1)
 
         if self.chat_panel is not None:
-            # 얇은 세로 토글 핸들 ( '>' 접기 / '<' 펼치기 )
-            self.chat_toggle_btn = QPushButton("›", self)
-            self.chat_toggle_btn.setFixedWidth(18)
-            self.chat_toggle_btn.setToolTip("채팅 패널 접기/펼치기")
-            self.chat_toggle_btn.setStyleSheet(
-                "QPushButton { background: rgba(124,77,255,0.18); color:#e2e8f0;"
-                " border:1px solid rgba(255,255,255,0.10); border-radius:6px; font-size:14px; font-weight:bold; }"
-                " QPushButton:hover { background: rgba(124,77,255,0.40); }"
-            )
-            self.chat_toggle_btn.clicked.connect(self.toggle_chat_panel)
-            outer.addWidget(self.chat_toggle_btn, 0)
-
             self.chat_panel.setFixedWidth(420)
             outer.addWidget(self.chat_panel, 0)
-            self.resize(700 + 18 + 420, 680)
+            self.resize(700 + 420, 680)
+            # 상단 컨트롤바(녹음중 옆)에 채팅 토글 버튼 노출 → 클릭 시 toggle_chat_panel 위임(overlay 베이스)
+            self.enable_chat_toggle(True)
         else:
-            self.chat_toggle_btn = None
             self.resize(700, 680)
 
         # 좌상단에 떠 있는 창 이름(레이아웃 공간을 차지하지 않도록 절대 배치) — 흐름도 90% 확보에 기여
@@ -204,9 +194,9 @@ class FlowUI(TranslucentOverlay):
         if self.chat_panel is None:
             return
         self.chat_panel.setVisible(visible)
-        if self.chat_toggle_btn is not None:
-            self.chat_toggle_btn.setText("›" if visible else "‹")
-            self.chat_toggle_btn.setToolTip("채팅 패널 접기" if visible else "채팅 패널 펼치기")
+        # 컨트롤바 채팅 버튼 툴팁 동기화(overlay 베이스의 btn_chat)
+        if getattr(self, "btn_chat", None) is not None:
+            self.btn_chat.setToolTip("채팅 패널 접기" if visible else "채팅 패널 펼치기")
 
     # -------------------- 상태 / 다이어그램 --------------------
     def update_status_text(self, text: str):

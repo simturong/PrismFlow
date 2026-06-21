@@ -2,11 +2,23 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QSlider
 from PySide6.QtCore import Qt, QPropertyAnimation, QPoint, QRect, QEvent
 from prismflow.ui_common.indicators import RecordingIndicator
 
+# Segoe MDL2 Assets 글리프 (소스에 실제 글리프 문자를 넣지 않고 escape로 통일 → 편집 안전)
+_ICON_PLAY = ""       # 재생/시작/재개
+_ICON_PAUSE = ""      # 일시중지
+_ICON_STOP = ""       # 정지(종료)
+_ICON_CHAT = ""       # 메시지/채팅 토글
+_ICON_MIN = ""        # ChromeMinimize
+_ICON_MAX = ""        # ChromeMaximize
+_ICON_RESTORE = ""    # ChromeRestore
+_ICON_CLOSE = ""      # ChromeClose
+
+
 class TranslucentOverlay(QWidget):
     """
     투명 오버레이 윈도우의 공통 베이스 클래스.
     프레임리스·투명 배경이며, 마우스 호버 페이드 효과 및 드래그 이동을 지원합니다.
-    마우스 드래그 크기 조절(Resize) 및 우측 상단 창 조작 영역(녹음 표시·투명도 슬라이더·최소화·최대화·닫기)을 지원합니다.
+    마우스 드래그 크기 조절(Resize) 및 우측 상단 창 조작 영역(녹음 표시·채팅 토글·투명도 슬라이더·
+    회의 정지/재생·일시정지·최소화·최대화·닫기)을 지원합니다.
 
     (정책) '항상 위(WindowStaysOnTopHint)'는 적용하지 않습니다. 다른 창이 포커스를 가지면
     오버레이는 자연스럽게 그 뒤로 가야 하므로, 일반 도구 창처럼 z-order를 OS에 맡깁니다.
@@ -51,35 +63,38 @@ class TranslucentOverlay(QWidget):
         from prismflow.core.context import MeetingContext
         self.context = MeetingContext()
 
-        # 우측 상단 창 조작 영역 초기화 (녹음 표시 + 투명도 슬라이더 + 최소/최대/닫기)
+        # 우측 상단 창 조작 영역 초기화
         self._init_control_buttons()
 
         self.context.signals.meeting_started.connect(self._on_meeting_started)
         self.context.signals.meeting_ended.connect(self._on_meeting_ended)
         self.context.signals.meeting_paused.connect(self._on_meeting_paused)
 
-        if self.context.is_meeting_active:
-            self.btn_pause.setVisible(True)
-            self.btn_stop.setVisible(True)
-            if self.context.is_meeting_paused:
-                self.btn_pause.setText("\uE768") # Play
-                self.btn_pause.setToolTip("회의 재개")
+        # 초기 회의 제어 버튼 상태 반영(시작/일시중지/정지 표시)
+        self._refresh_meeting_controls()
 
     def _init_control_buttons(self):
-        # 컨트롤(녹음 표시·슬라이더·버튼)을 한데 묶는 우측 상단 플로팅 위젯
+        # 컨트롤(녹음 표시·채팅 토글·슬라이더·버튼)을 한데 묶는 우측 상단 플로팅 위젯
         self.control_widget = QWidget(self)
         self.control_widget.setObjectName("overlay-controls")
-        # 레이아웃 위에 얹히도록 z-order 상위 배치
         self.control_widget.raise_()
 
         layout = QHBoxLayout(self.control_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
-        # 녹음(회의 진행) 인디케이터 — 최소화 버튼 바로 왼쪽. 회의 시작 시 set_recording(True)로 점멸.
+        # 녹음(회의 진행) 인디케이터 — 회의 시작 시 set_recording(True)로 점멸.
         self.recording_indicator = RecordingIndicator(self.control_widget)
 
-        # 투명도 조절 슬라이더 — 녹음 표시 옆 작은 가로 슬라이더(20%~100%).
+        # 채팅 패널 토글 버튼 — 녹음 표시 바로 옆. 호스트(콘솔)가 채팅 패널을 가질 때만 보인다.
+        self.btn_chat = QPushButton(self.control_widget)
+        self.btn_chat.setFixedSize(28, 20)
+        self.btn_chat.setText(_ICON_CHAT)
+        self.btn_chat.setToolTip("채팅 패널 접기/펼치기")
+        self.btn_chat.clicked.connect(self._on_chat_toggle_clicked)
+        self.btn_chat.setVisible(False)
+
+        # 투명도 조절 슬라이더 — 작은 가로 슬라이더(20%~100%).
         self.opacity_slider = QSlider(Qt.Horizontal, self.control_widget)
         self.opacity_slider.setMinimum(20)
         self.opacity_slider.setMaximum(100)
@@ -91,71 +106,74 @@ class TranslucentOverlay(QWidget):
         self.opacity_slider.sliderPressed.connect(lambda: setattr(self, "_user_opacity_active", True))
         self.opacity_slider.sliderReleased.connect(self._on_opacity_slider_released)
 
-        # 일시중지 버튼 — \uE769 (Pause) / \uE768 (Play)
-        # 회의 시작 버튼 — Play 글리프. 회의 비활성일 때만 보이며, 시작하면 일시중지/정지로 전환된다.
-        self.btn_start = QPushButton(self.control_widget)
-        self.btn_start.setFixedSize(28, 20)
-        self.btn_start.setText("")  # Play
-        self.btn_start.setToolTip("회의 시작")
-        self.btn_start.clicked.connect(self._on_start_clicked)
-
-        self.btn_pause = QPushButton(self.control_widget)
-        self.btn_pause.setFixedSize(28, 20)
-        self.btn_pause.setText("\uE769")
-        self.btn_pause.setToolTip("회의 일시중지")
-        self.btn_pause.clicked.connect(self._on_pause_clicked)
-        self.btn_pause.setVisible(False)
-
-        # 정지 버튼 — \uE71A (Stop)
+        # 회의 정지(종료) 버튼 — 재생/일시정지 버튼의 '왼쪽'. 회의 중에만 보인다.
         self.btn_stop = QPushButton(self.control_widget)
         self.btn_stop.setFixedSize(28, 20)
-        self.btn_stop.setText("\uE71A")
+        self.btn_stop.setText(_ICON_STOP)
         self.btn_stop.setToolTip("회의 정지(종료)")
         self.btn_stop.clicked.connect(self._on_stop_clicked)
         self.btn_stop.setVisible(False)
 
-        # 최소화 버튼 — Segoe MDL2 Assets  (ChromeMinimize)
+        # 재생/일시정지 토글 버튼 — 비활성: 시작(▶) / 진행 중: 일시중지(⏸) / 일시중지됨: 재개(▶)
+        self.btn_playpause = QPushButton(self.control_widget)
+        self.btn_playpause.setFixedSize(28, 20)
+        self.btn_playpause.setText(_ICON_PLAY)
+        self.btn_playpause.setToolTip("회의 시작")
+        self.btn_playpause.clicked.connect(self._on_playpause_clicked)
+
+        # 최소화 버튼
         self.btn_minimize = QPushButton(self.control_widget)
         self.btn_minimize.setFixedSize(28, 20)
-        self.btn_minimize.setText("")
+        self.btn_minimize.setText(_ICON_MIN)
         self.btn_minimize.setToolTip("최소화")
         self.btn_minimize.clicked.connect(self.showMinimized)
 
-        # 최대화/복원 버튼 —  (ChromeMaximize) /  (ChromeRestore)
+        # 최대화/복원 버튼
         self.btn_maximize = QPushButton(self.control_widget)
         self.btn_maximize.setFixedSize(28, 20)
         self.btn_maximize.setToolTip("최대화")
         self.btn_maximize.clicked.connect(self.toggle_maximize)
 
-        # 닫기 버튼 — Segoe MDL2 Assets  (ChromeClose)
+        # 닫기 버튼
         self.btn_close = QPushButton(self.control_widget)
         self.btn_close.setFixedSize(28, 20)
-        self.btn_close.setText("")
+        self.btn_close.setText(_ICON_CLOSE)
         self.btn_close.setToolTip("닫기")
         self.btn_close.clicked.connect(self.close)
 
-        # QSS 스타일 초기 적용 (윈도우 표준 플랫 스타일, 고대비 색상)
-        self.btn_minimize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
-        self.btn_start.setStyleSheet(self._button_style("#4ade80", "transparent", "rgba(74, 222, 128, 0.25)"))
-        self.btn_pause.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+        # QSS 스타일 (윈도우 표준 플랫 스타일, 고대비 색상)
+        neutral = self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)")
+        self.btn_minimize.setStyleSheet(neutral)
+        self.btn_chat.setStyleSheet(self._button_style("#a78bfa", "transparent", "rgba(124, 77, 255, 0.30)"))
+        self.btn_playpause.setStyleSheet(self._button_style("#4ade80", "transparent", "rgba(74, 222, 128, 0.25)"))
         self.btn_stop.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
         self.btn_close.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
         self._update_maximize_button_style()
 
+        # 배치 순서: [녹음표시] [채팅토글] [슬라이더] [정지] [재생/일시정지] [최소화] [최대화] [닫기]
         layout.addWidget(self.recording_indicator)
+        layout.addWidget(self.btn_chat)
         layout.addWidget(self.opacity_slider)
-        layout.addWidget(self.btn_start)
-        layout.addWidget(self.btn_pause)
         layout.addWidget(self.btn_stop)
-
-        # 초기 표시: 회의 비활성이면 시작 버튼만, 활성이면 일시중지/정지만.
-        self.btn_start.setVisible(not self.context.is_meeting_active)
+        layout.addWidget(self.btn_playpause)
         layout.addWidget(self.btn_minimize)
         layout.addWidget(self.btn_maximize)
         layout.addWidget(self.btn_close)
 
-        # 녹음 인디케이터는 회의 중에만 보여 폭이 가변 → 고정 크기 대신 내용에 맞춘다.
+        # 녹음 인디케이터/정지 버튼은 회의 중에만 보여 폭이 가변 → 내용에 맞춘다.
         self.control_widget.adjustSize()
+
+    # -------------------- 채팅 토글 (호스트가 채팅 패널을 가질 때만) --------------------
+    def enable_chat_toggle(self, enabled: bool = True):
+        """호스트(콘솔)가 채팅 패널을 임베드할 때 컨트롤바의 채팅 토글 버튼을 노출한다."""
+        self.btn_chat.setVisible(enabled)
+        self._reposition_controls()
+
+    def _on_chat_toggle_clicked(self):
+        # 호스트가 toggle_chat_panel을 구현하면 위임(FlowUI 등). 없으면 무시.
+        fn = getattr(self, "toggle_chat_panel", None)
+        if callable(fn):
+            fn()
 
     def _slider_style(self) -> str:
         return """
@@ -217,13 +235,14 @@ class TranslucentOverlay(QWidget):
 
     def _update_maximize_button_style(self):
         """최대화/복원 상태에 맞게 버튼 글자와 스타일을 갱신합니다."""
+        neutral = self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)")
         if self.isMaximized():
-            self.btn_maximize.setText("")  # ChromeRestore
-            self.btn_maximize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+            self.btn_maximize.setText(_ICON_RESTORE)
+            self.btn_maximize.setStyleSheet(neutral)
             self.btn_maximize.setToolTip("이전 크기로 복원")
         else:
-            self.btn_maximize.setText("")  # ChromeMaximize
-            self.btn_maximize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+            self.btn_maximize.setText(_ICON_MAX)
+            self.btn_maximize.setStyleSheet(neutral)
             self.btn_maximize.setToolTip("최대화")
 
     def toggle_maximize(self):
@@ -239,18 +258,14 @@ class TranslucentOverlay(QWidget):
         super().changeEvent(event)
 
     def set_recording(self, recording: bool):
-        """우측 상단 녹음 인디케이터의 점멸을 켜고 끈다 (회의 시작/종료 시 호출).
-
-        녹음 표시가 보이고 숨겨질 때 컨트롤 영역의 폭이 달라지므로, 표시 변경 후
-        컨트롤 묶음 크기를 다시 맞추고 우측 상단으로 재배치한다.
-        """
+        """우측 상단 녹음 인디케이터의 점멸을 켜고 끈다 (회의 시작/종료 시 호출)."""
         self.recording_indicator.set_recording(recording)
         self._reposition_controls()
         if recording:
             self.control_widget.raise_()
 
     def _reposition_controls(self):
-        """컨트롤 묶음(녹음·슬라이더·버튼)을 내용 크기에 맞춰 우측 상단(우측 14px, 상단 12px)에 재배치한다."""
+        """컨트롤 묶음을 내용 크기에 맞춰 우측 상단(우측 14px, 상단 12px)에 재배치한다."""
         self.control_widget.adjustSize()
         self.control_widget.move(self.width() - self.control_widget.width() - 14, 12)
         self.control_widget.raise_()
@@ -265,7 +280,6 @@ class TranslucentOverlay(QWidget):
         painter.setRenderHint(QPainter.Antialiasing)
         # 배경 채움은 '불투명'으로 둔다. 투명도는 전적으로 windowOpacity(투명도 슬라이더)가 제어하므로,
         # 슬라이더를 오른쪽 끝(100%)으로 올리면 창이 전혀 비치지 않고 완전히 불투명해진다.
-        # (배경에 alpha를 또 주면 슬라이더가 100%여도 항상 일부 비쳐 보이는 문제가 생긴다.)
         painter.setBrush(QColor(30, 30, 30, 255))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(self.rect(), 12, 12)
@@ -296,40 +310,43 @@ class TranslucentOverlay(QWidget):
             pass
         super().closeEvent(event)
 
-    def _on_start_clicked(self):
-        """창의 ▶ 버튼으로 회의를 시작한다(트레이 '회의 시작'과 동일 경로)."""
-        from datetime import datetime
+    # -------------------- 회의 제어 상태기계 --------------------
+    def _on_playpause_clicked(self):
+        """▶/⏸ 토글: 비활성이면 회의 시작, 진행 중이면 일시중지/재개 토글."""
         if not self.context.is_meeting_active:
+            from datetime import datetime
             session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.context.start_meeting(session_id)
-
-    def _on_pause_clicked(self):
-        self.context.toggle_pause()
+        else:
+            self.context.toggle_pause()
 
     def _on_stop_clicked(self):
         self.context.end_meeting()
 
-    def _on_meeting_started(self, session_id: str):
-        self.btn_start.setVisible(False)
-        self.btn_pause.setVisible(True)
-        self.btn_stop.setVisible(True)
-        self.btn_pause.setText("\uE769") # Pause
-        self.btn_pause.setToolTip("회의 일시중지")
+    def _refresh_meeting_controls(self):
+        """현재 회의 상태에 맞춰 정지/재생-일시정지 버튼의 아이콘·표시를 동기화한다."""
+        active = self.context.is_meeting_active
+        paused = self.context.is_meeting_paused
+        self.btn_stop.setVisible(active)
+        if not active:
+            self.btn_playpause.setText(_ICON_PLAY)
+            self.btn_playpause.setToolTip("회의 시작")
+        elif paused:
+            self.btn_playpause.setText(_ICON_PLAY)
+            self.btn_playpause.setToolTip("회의 재개")
+        else:
+            self.btn_playpause.setText(_ICON_PAUSE)
+            self.btn_playpause.setToolTip("회의 일시중지")
         self._reposition_controls()
+
+    def _on_meeting_started(self, session_id: str):
+        self._refresh_meeting_controls()
 
     def _on_meeting_ended(self, session_id: str):
-        self.btn_pause.setVisible(False)
-        self.btn_stop.setVisible(False)
-        self.btn_start.setVisible(True)
-        self._reposition_controls()
+        self._refresh_meeting_controls()
 
     def _on_meeting_paused(self, paused: bool):
-        if paused:
-            self.btn_pause.setText("\uE768") # Play
-            self.btn_pause.setToolTip("회의 재개")
-        else:
-            self.btn_pause.setText("\uE769") # Pause
-            self.btn_pause.setToolTip("회의 일시중지")
+        self._refresh_meeting_controls()
 
     def _get_resize_edge(self, pos):
         margin = self.resize_margin

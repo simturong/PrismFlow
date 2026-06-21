@@ -24,12 +24,8 @@ def get_mermaid_html() -> str:
             padding: 2px;
             font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
             color: #e0e0e0;
-            overflow: auto;
             height: 100vh;
             box-sizing: border-box;
-            display: flex;
-            justify-content: center;
-            align-items: center;
         }
         #diagram-container {
             width: 100%;
@@ -42,9 +38,10 @@ def get_mermaid_html() -> str:
             -webkit-backdrop-filter: blur(12px);
             border: 1px solid rgba(255, 255, 255, 0.12);
             transition: all 0.3s ease-in-out;
+            /* 좌우 여백을 줄이고 세로로 긴 그래프는 축소(가독성↓) 대신 스크롤 */
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             overflow: auto;
             box-sizing: border-box;
         }
@@ -53,22 +50,24 @@ def get_mermaid_html() -> str:
             opacity: 0;
             transform: translateY(8px) scale(0.98);
             transition: opacity 0.45s ease-out, transform 0.45s ease-out;
+            width: 100%;
         }
         .mermaid.fade-in {
             opacity: 1;
             transform: translateY(0) scale(1);
         }
-        /* Mermaid 커스텀 스타일 정의 */
-        .mermaid {
-            width: 100%;
-            height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+        /* svg는 폭을 꽉 채우되(좌우 여백 최소화), 세로는 자연 크기로 두고 컨테이너가 스크롤 */
+        #diagram-container svg {
+            width: 100% !important;
+            max-width: 100% !important;
+            height: auto !important;
+            max-height: none !important;
         }
-        svg {
-            max-width: 100%;
-            max-height: 100%;
+        /* 노드 라벨 줄바꿈 허용(긴 한국어가 박스를 넘쳐 잘리지 않게) */
+        .mermaid .nodeLabel, .mermaid .label, .mermaid span.nodeLabel {
+            white-space: normal !important;
+            word-break: keep-all;
+            line-height: 1.25;
         }
     </style>
     <script src="__MERMAID_JS_URL__"></script>
@@ -84,9 +83,9 @@ def get_mermaid_html() -> str:
                 lineColor: '#03a9f4',
                 secondaryColor: '#2d2d35',
                 tertiaryColor: '#1a1a20',
-                fontSize: '28px'
+                fontSize: '20px'
             },
-            flowchart: { useMaxWidth: true, htmlLabels: true, padding: 12 },
+            flowchart: { useMaxWidth: true, htmlLabels: true, padding: 14, nodeSpacing: 45, rankSpacing: 45, wrappingWidth: 220 },
             securityLevel: 'loose'
         });
         

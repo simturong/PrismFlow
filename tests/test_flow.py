@@ -37,33 +37,31 @@ def test_flow_ui_init(q_app):
 
 
 def test_flow_ui_embedded_chat_toggle(q_app):
-    """Phase 16: chat_panel을 주면 우측에 임베드되고 토글로 접고 펼칠 수 있다."""
+    """Phase 16/17: chat_panel을 주면 우측 임베드 + 상단 컨트롤바 채팅 버튼으로 접고 펼친다."""
     from PySide6.QtWidgets import QWidget
     chat = QWidget()
     ui = FlowUI(chat_panel=chat)
     try:
-        # 임베드 + 토글 버튼 생성, 기본 펼침(숨김 아님)
+        # 임베드 + 컨트롤바 채팅 토글 버튼 노출, 기본 펼침(숨김 아님)
         assert ui.chat_panel is chat
-        assert ui.chat_toggle_btn is not None
+        assert ui.btn_chat.isVisibleTo(ui.control_widget) is True
         assert chat.isHidden() is False
-        # 접기 → 숨김, 글리프 전환
+        # 접기 → 숨김
         ui.toggle_chat_panel()
         assert chat.isHidden() is True
-        assert ui.chat_toggle_btn.text() == "‹"
         # 다시 펼치기
         ui.toggle_chat_panel()
         assert chat.isHidden() is False
-        assert ui.chat_toggle_btn.text() == "›"
     finally:
         ui.close()
 
 
 def test_flow_ui_no_chat_panel_default(q_app):
-    """chat_panel 미지정 시 단독 Flow로 동작(토글 버튼 없음)."""
+    """chat_panel 미지정 시 단독 Flow로 동작(컨트롤바 채팅 버튼 숨김)."""
     ui = FlowUI()
     try:
         assert ui.chat_panel is None
-        assert ui.chat_toggle_btn is None
+        assert ui.btn_chat.isVisibleTo(ui.control_widget) is False
     finally:
         ui.close()
 

@@ -204,9 +204,9 @@
 
 ## Phase 17: 회의 제어 UX 재설계 · Mermaid 사용성/자유도 · 실시간 전사 개선 — 🚧 진행 중
 > Phase 16 E2E 후속 피드백. 모델 결론(사용자 지시): **기본 medium 확정, 빡세게 튜닝**. 상세: docs/implementation_plan.md Phase 17.
-- [ ] 17-1: 회의 제어 재설계 — ⏹ 정지(좌) + ▶/⏸ 재생-일시정지 토글(우) 상태기계(시작/재개/일시정지/정지)
-- [ ] 17-2: Mermaid 사용성·자유도 — 글자 잘림 해소(htmlLabels/패딩/폰트 재튜닝), 좌우 여백 활용(useMaxWidth/방향 자유), 맥락 기반 동적 구성(subgraph 의무·stale 노드 제거·압축, append 강제 탈피)
-- [ ] 17-3: STT 기본 medium 확정(빡센 튜닝) + interim 망각 해소(확정문장 누적+진행발화만 interim) + 확정 지연 단축(endpoint 재튜닝) + 반복 환각 억제 강화
-- [ ] 17-4: 채팅 토글 핸들을 상단 컨트롤바(녹음중 옆)로 이동 + 아이콘 교체 + 기본 여백 제거
-- [ ] 17-5: 회귀(test_status/test_flow 갱신, 전체 무결) + 문서 동기화
+- [x] 17-1: 회의 제어 재설계 — ⏹ 정지(좌) + ▶/⏸ 재생-일시정지 토글(우) 상태기계(`_refresh_meeting_controls`). overlay.py 글리프 escape 통일 재작성. 32 passed
+- [x] 17-2: Mermaid 사용성·자유도 — 폰트 28→20px·htmlLabels 라벨 줄바꿈·패딩↑(잘림 해소), svg 폭 꽉 채움+세로 스크롤(여백/축소 완화), Flow 프롬프트 자유 재구성(subgraph 의무·stale 제거·12~15노드 압축·방향 자유). test_flow 10 passed
+- [x] 17-3: STT 기본 medium 확정(DB) + endpoint 1.0→0.7초(확정 신속·문장 누적 촉진) + interim을 진행발화 전체(상한 10초)로 되돌려 앞부분 망각 해소 + collapse_repetitions 유지. test_stt 6 passed
+- [x] 17-4: 채팅 토글을 상단 컨트롤바(녹음중 옆) 💬 버튼으로 이동(`enable_chat_toggle`/`_on_chat_toggle_clicked`), 중앙 세로 핸들 제거 → 접힘 시 여백 컬럼 없음. 32 passed
+- [x] 17-5: 회귀(test_flow 토글 테스트 갱신, 전체 **100 passed/1 skip**) + 문서(history/task/plan) 동기화
 

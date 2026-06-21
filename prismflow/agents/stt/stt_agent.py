@@ -192,14 +192,15 @@ class RealTimeEngineWorker(QThread):
 
         # config.vad_threshold(0~1)를 에너지(RMS) 게이트로 매핑. 0.5 → 0.005 (일반 발화/무음 분리 수준)
         energy_gate = 0.01 * float(getattr(self.config, "vad_threshold", 0.5))
-        endpoint_samples = int(1.0 * sr)   # 발화 후 1.0초 무음이면 종료(문장 중간 pause 파편화 방지)
-        min_utt_samples = int(0.6 * sr)    # 0.6초 미만 발화는 잡음/초단 파편으로 간주해 폐기
+        # Phase 17-3: 확정 지연 단축 — 0.7초 무음이면 문장 단위로 빨리 확정해 "확정 문장 누적"을 촉진.
+        # (확정이 빨라지면 라이브 자막이 확정 기록으로 자주 넘어가, interim이 앞 문장을 잃는 체감이 줄어든다.)
+        endpoint_samples = int(0.7 * sr)   # 발화 후 0.7초 무음이면 종료(문장 경계에서 신속 확정)
+        min_utt_samples = int(0.5 * sr)    # 0.5초 미만 발화는 잡음/초단 파편으로 간주해 폐기
         max_utt_samples = int(20.0 * sr)   # 백프레셔: 20초 초과 발화는 강제 분절
-        # 실시간 임시 전사는 발화 누적 전체가 아니라 최근 4초만 전사한다.
-        # (발화가 길어질수록 매 0.5초 interim이 전체를 재전사해 GPU 부하/지연이 누적되는 것을 방지.
-        #  벤치 RTF는 작지만 interim이 0.5초마다 누적버퍼를 반복 전사하는 것이 체감 지연의 핵심이었음.
-        #  최종 전사는 finalize에서 발화 전체를 1회 정확히 전사하므로 정확도 손실 없음.)
-        interim_window_samples = int(4.0 * sr)
+        # interim(라이브 자막)은 진행 중 발화의 '전체'를 보여 앞부분을 잃지 않게 한다.
+        # endpoint가 0.7초로 짧아 발화(=문장)가 대체로 짧으므로 전체 전사도 가볍다.
+        # 다만 사용자가 쉬지 않고 매우 길게 말하는 폭주 발화를 대비해 상한(10초)만 둔다.
+        interim_window_samples = int(10.0 * sr)
 
         utt = []                  # 현재 발화 버퍼(청크 리스트)
         in_speech = False
