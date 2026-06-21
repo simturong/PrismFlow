@@ -1,7 +1,21 @@
 import sys
 import logging
 from PySide6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, qInstallMessageHandler
+
+
+def _install_qt_message_filter():
+    """알려진 무해(benign) Qt 경고 한 줄만 억제하고 나머지는 그대로 통과시킨다.
+
+    'QFont::setPointSize: Point size <= 0 (-1)'는 일부 위젯/QtWebEngine이 픽셀 크기(font-size:Npx)
+    폰트를 다룰 때 Qt 내부가 setPointSize(-1)을 호출하며 발생한다(우리 코드 아님, 동작 영향 없음).
+    로그를 깨끗하게 유지하기 위해 이 메시지만 필터링하고, 다른 모든 메시지는 표준 에러로 흘려보낸다.
+    """
+    def handler(mode, context, message):
+        if "QFont::setPointSize: Point size <= 0" in message:
+            return
+        sys.stderr.write(str(message) + "\n")
+    qInstallMessageHandler(handler)
 
 from prismflow.core.config import AppConfig
 from prismflow.core.context import MeetingContext
@@ -297,6 +311,9 @@ class AppCoordinator:
         # 가장 먼저 싱글톤 컨텍스트 구독을 해제하여 좀비 코디네이터가 이후 회의 신호에 반응하지 못하게 합니다.
         # 그다음 DB·CLI 워커 보유 에이전트(Chat/Report)를 합류 대기시키고, 입력 생산자(STT/Flow/화면감지)를 정지합니다.
         cleanup_steps = [
+            # 가장 먼저 진행 중인 CLI 서브프로세스를 강제 종료하여, in-flight 호출에 묶인 워커 스레드의
+            # wait()가 즉시 풀리도록 한다(앱 종료가 CLI 응답을 기다리며 길게 멈추지 않게 함).
+            ("cli_terminate", self.cli_controller.terminate_all),
             ("context_signals", self._disconnect_context_signals),
             ("chat_agent", lambda: self.chat_agent and self.chat_agent.cleanup()),
             ("report_agent", lambda: self.report_agent and self.report_agent.cleanup()),
@@ -329,6 +346,8 @@ class AppCoordinator:
                 pass
 
 def main():
+    # 알려진 무해 Qt 경고를 필터링(위젯 생성 전에 설치)
+    _install_qt_message_filter()
     app = QApplication(sys.argv)
     
     # 로컬 Pretendard 폰트 로드 시도

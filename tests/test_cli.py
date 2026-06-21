@@ -24,6 +24,27 @@ def test_normalize_session_id_converts_semantic_name_deterministically():
     # 서로 다른 에이전트 세션명은 서로 다른 UUID로 분리되어야 함
     assert out != ClaudeCLIController._normalize_session_id("flow-session-20260620_190019")
 
+def test_terminate_all_kills_inflight_and_blocks_new(tmp_path):
+    """앱 종료 시 in-flight CLI 프로세스를 강제 종료하고, 이후 새 프로세스는 시작과 동시에 죽인다."""
+    class FakeProc:
+        def __init__(self):
+            self.killed = False
+        def kill(self):
+            self.killed = True
+
+    controller = ClaudeCLIController(AppConfig(db_path=str(tmp_path / "t.db"), claude_cli_cmd="claude"))
+
+    p = FakeProc()
+    assert controller._register_proc(p) is True          # 정상 등록
+    controller.terminate_all()
+    assert p.killed is True                               # 추적 중이던 프로세스를 강제 종료
+    assert controller._shutting_down is True
+
+    p2 = FakeProc()
+    assert controller._register_proc(p2) is False         # 종료 모드에서는 등록 거부
+    assert p2.killed is True                              # 새로 시작된 프로세스도 즉시 사살
+
+
 def test_cli_controller_execute_success():
     """실제 Claude CLI 호출 성공 테스트"""
     # 실제 환경의 claude CLI를 사용하기 위해 기본 설정 로드

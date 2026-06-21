@@ -3,6 +3,7 @@ import logging
 import uuid
 import tempfile
 import shutil
+import threading
 from typing import Optional, List
 from prismflow.core.config import AppConfig
 
@@ -38,6 +39,43 @@ class ClaudeCLIController:
         # 이 프로세스에서 이미 생성(--session-id)한 CLI 세션 UUID 집합.
         # 두 번째 호출부터는 --resume를 쓰도록 하여 "Session ID ... is already in use" 충돌을 방지한다.
         self._created_sessions = set()
+        # 진행 중인 CLI 서브프로세스 추적(앱 종료 시 in-flight 호출을 즉시 중단하기 위함).
+        self._active_procs = set()
+        self._proc_lock = threading.Lock()
+        self._shutting_down = False
+
+    def _register_proc(self, proc) -> bool:
+        """실행 중인 서브프로세스를 추적 집합에 등록한다. 이미 종료(shutdown) 중이면 즉시 죽이고 False."""
+        with self._proc_lock:
+            if self._shutting_down:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                return False
+            self._active_procs.add(proc)
+            return True
+
+    def _unregister_proc(self, proc):
+        with self._proc_lock:
+            self._active_procs.discard(proc)
+
+    def terminate_all(self):
+        """진행 중인 모든 CLI 서브프로세스를 강제 종료한다.
+
+        앱 종료 시점에 호출하여, Flow/Report/Chat 에이전트가 붙들고 있는 in-flight CLI 호출을 즉시
+        끊는다. 그러면 각 워커 스레드의 readline/communicate가 곧바로 반환되어 wait()가 빠르게 풀리고,
+        앱이 CLI 응답을 기다리며 길게 멈추지 않는다. 이후 새 호출은 시작과 동시에 죽는다.
+        """
+        with self._proc_lock:
+            self._shutting_down = True
+            procs = list(self._active_procs)
+        for p in procs:
+            try:
+                p.kill()
+            except Exception:
+                pass
+        logger.info(f"terminate_all: killed {len(procs)} in-flight CLI process(es).")
 
     def _log_request(self, session_id, model, prompt: str):
         """요청(입력)을 호출 즉시 디버그 로그에 best-effort 기록한다(응답 전에도 실시간 표시)."""
@@ -66,21 +104,36 @@ class ClaudeCLIController:
         return args
 
     def _run_once(self, tail_args: List[str], prompt: str, timeout: int) -> subprocess.CompletedProcess:
-        """`claude -p <tail_args>`를 shell 없이 1회 실행하고, 프롬프트는 STDIN으로 전달합니다."""
+        """`claude -p <tail_args>`를 shell 없이 1회 실행하고, 프롬프트는 STDIN으로 전달합니다.
+
+        앱 종료 시 강제 중단이 가능하도록 subprocess.run 대신 추적 가능한 Popen으로 실행한다.
+        """
         cmd = [self._cli_exe, "-p"] + tail_args
         logger.debug(f"Executing Claude CLI: {' '.join(cmd)}")
-        return subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            input=prompt,
+            stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             encoding='utf-8',
             errors='ignore',
-            timeout=timeout,
             shell=False,
             cwd=self._cli_cwd,
         )
+        self._register_proc(proc)
+        try:
+            out, err = proc.communicate(input=prompt, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.communicate()
+            except Exception:
+                pass
+            raise
+        finally:
+            self._unregister_proc(proc)
+        return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
     @staticmethod
     def _looks_like_session_limit(text: str) -> bool:
@@ -273,38 +326,43 @@ class ClaudeCLIController:
                     raise
                 proc.stdin.write(prompt)
                 proc.stdin.close()
+                # 앱 종료 시 강제 중단이 가능하도록 추적 등록(끝나면 finally에서 해제)
+                self._register_proc(proc)
 
-                # 첫 줄을 읽어 즉시 실패(세션 충돌 등)와 정상 스트리밍을 구분한다.
-                first = proc.stdout.readline()
-                if first == "":
+                try:
+                    # 첫 줄을 읽어 즉시 실패(세션 충돌 등)와 정상 스트리밍을 구분한다.
+                    first = proc.stdout.readline()
+                    if first == "":
+                        proc.stdout.close()
+                        proc.wait()
+                        err = (proc.stderr.read() or "").strip()
+                        proc.stderr.close()
+                        last_err = err
+                        el = err.lower()
+                        if "session limit" in el or "limit" in el or "reset" in el:
+                            self._session_limited = True
+                        # 세션이 이미 존재 → 다음 후보(--resume)로 재시도
+                        if (not as_resume) and ("already in use" in el or "already exists" in el):
+                            self._created_sessions.add(session_id)
+                            continue
+                        if proc.returncode != 0 and err:
+                            raise RuntimeError(f"Claude CLI Stream failed: {err}")
+                        # 빈 응답이지만 정상 종료
+                        self._created_sessions.add(session_id)
+                        self._log_response(orig_session_id, model, "", "ok")
+                        return
+
+                    # 정상 스트리밍 시작
+                    self._created_sessions.add(session_id)
+                    collected.append(first)
+                    yield first
+                    for line in iter(proc.stdout.readline, ''):
+                        collected.append(line)
+                        yield line
                     proc.stdout.close()
                     proc.wait()
-                    err = (proc.stderr.read() or "").strip()
-                    proc.stderr.close()
-                    last_err = err
-                    el = err.lower()
-                    if "session limit" in el or "limit" in el or "reset" in el:
-                        self._session_limited = True
-                    # 세션이 이미 존재 → 다음 후보(--resume)로 재시도
-                    if (not as_resume) and ("already in use" in el or "already exists" in el):
-                        self._created_sessions.add(session_id)
-                        continue
-                    if proc.returncode != 0 and err:
-                        raise RuntimeError(f"Claude CLI Stream failed: {err}")
-                    # 빈 응답이지만 정상 종료
-                    self._created_sessions.add(session_id)
-                    self._log_response(orig_session_id, model, "", "ok")
-                    return
-
-                # 정상 스트리밍 시작
-                self._created_sessions.add(session_id)
-                collected.append(first)
-                yield first
-                for line in iter(proc.stdout.readline, ''):
-                    collected.append(line)
-                    yield line
-                proc.stdout.close()
-                proc.wait()
+                finally:
+                    self._unregister_proc(proc)
                 if proc.returncode != 0:
                     err = (proc.stderr.read() or "").strip()
                     proc.stderr.close()
