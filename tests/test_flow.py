@@ -26,6 +26,13 @@ def test_flow_ui_init(q_app):
     
     # 예외 없이 실행되는지 테스트
     ui.update_diagram("graph TD\nA-->B")
+    
+    # 엔진 모드 표시 검증 (Phase 14)
+    ui.update_engine_mode("Claude")
+    assert "Claude" in ui.title_label.text()
+    ui.update_engine_mode("Local")
+    assert "Local" in ui.title_label.text()
+    
     ui.close()
 
 def test_screen_detector_generic_fallback(q_app):

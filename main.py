@@ -144,12 +144,10 @@ class AppCoordinator:
         #    8초 바닥 간격만 지키면 주기를 기다리지 않고 즉시 흐름도를 갱신한다(실시간성↑, CLI 폭주 방지).
         self.flow_agent = FlowAgent(self.context, self.cli_controller,
                                     check_interval_sec=15.0, burst_threshold=3, min_interval_sec=8.0)
-        self.flow_agent.diagram_updated.connect(self.flow_ui.update_diagram)
+        self.flow_agent.diagram_updated.connect(self._on_flow_diagram_updated)
         self.flow_agent.summary_updated.connect(self.flow_ui.update_headline)
         self.flow_agent.analysis_started.connect(
             lambda: self.status_hub.set_status("flow", AgentState.WORKING, "생성중"))
-        self.flow_agent.diagram_updated.connect(
-            lambda code: self.status_hub.set_status("flow", AgentState.OK, "갱신✓"))
         self.flow_agent.analysis_failed.connect(
             lambda e: self.status_hub.set_status("flow", AgentState.ERROR, "CLI오류"))
         self.flow_agent.start()
@@ -252,6 +250,18 @@ class AppCoordinator:
 
         # 흐름도 오버레이를 초기 안내 화면으로 리셋
         self.flow_ui.reset_diagram()
+
+    def _on_flow_diagram_updated(self, code: str):
+        """Flow Agent에서 갱신된 다이어그램을 받아 UI를 업데이트하고 모드를 표기합니다."""
+        # 1. UI 다이어그램 렌더링 갱신
+        self.flow_ui.update_diagram(code)
+        
+        # 2. 엔진 모드 판정 및 갱신 (Claude 또는 Local)
+        mode = "Local" if self.cli_controller.is_session_limited() else "Claude"
+        self.flow_ui.update_engine_mode(mode)
+        
+        # 3. 에이전트 상태 허브 OK + 모드 반영
+        self.status_hub.set_status("flow", AgentState.OK, mode)
 
     def _on_report_generated(self, filepath: str):
         logger.info(f"Final meeting report generated and opened: {filepath}")
@@ -366,6 +376,19 @@ def main():
     # 알려진 무해 Qt 경고를 필터링(위젯 생성 전에 설치)
     _install_qt_message_filter()
     app = QApplication(sys.argv)
+    
+    # 중복 실행 방지 (QLockFile 활용)
+    from PySide6.QtCore import QLockFile, QDir
+    import os
+    lock_path = os.path.join(QDir.tempPath(), "prismflow_instance.lock")
+    app._lock_file = QLockFile(lock_path)
+    if not app._lock_file.tryLock(100):
+        QMessageBox.warning(
+            None,
+            "중복 실행 제한",
+            "PrismFlow가 이미 실행 중입니다.\n시스템 트레이 아이콘을 확인해 주세요."
+        )
+        sys.exit(1)
     
     # 로컬 Pretendard 폰트 로드 시도
     import os

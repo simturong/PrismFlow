@@ -1055,6 +1055,52 @@ endlocal
     *   검증 명령어: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q`
 
 
+---
+
+## 12. 상세 구현 설계서: Phase 14 (오버레이 엔진 모드 표시, UI 여백 최적화 및 STT 정확도 향상)
+
+### 14-1. 흐름도 블록 영역 꽉 채우기 (HTML/CSS 여백 최적화)
+*   **목적**: Mermaid 다이어그램이 표출되는 영역 주변에 과도하게 남아돌던 빈 여백을 없애고, 오버레이 창 내부를 꽉 채워 시인성을 극대화합니다.
+*   **구현 설계**:
+    *   `prismflow/agents/flow/mermaid_html.py` 내의 CSS 스타일시트를 수정합니다:
+        *   `body`: `padding: 15px;` -> `padding: 2px;` 로 줄여 웹뷰 경계 여백 제거.
+        *   `#diagram-container`: 
+            *   `width: 95%;` -> `width: 100%;` 로 확장.
+            *   `height: 90%;` -> `height: 100%;` 로 확장.
+            *   `padding: 24px;` -> `padding: 10px;` 로 안쪽 여백을 줄여 그림 면적 극대화.
+            *   `border-radius: 16px;` -> `border-radius: 8px;` 로 조절하여 하단 전사기록창의 border-radius와 통일.
+
+### 14-2. 상단 핵심 요약 뉴스 자막바 글씨 크기 확대
+*   **목적**: 회의 주제를 한눈에 볼 수 있도록 상단 속보식 뉴스 헤드라인의 시인성을 한단계 끌어올립니다.
+*   **구현 설계**:
+    *   `prismflow/agents/flow/flow_ui.py` 의 `self.headline_label` 스타일시트를 수정합니다:
+        *   `font-size: 11px;` -> `font-size: 13px;` 로 글자 크기 격상.
+        *   글자가 커짐에 따라 세로로 잘리지 않도록 `setFixedHeight(24)` -> `setFixedHeight(30)` 로 세로폭 조정.
+
+### 14-3. 좌상단 타이틀 옆에 엔진 모드 (Claude / Local) 동적 표시
+*   **목적**: 현재 생성된 흐름도가 원격 클라우드 AI(Claude)에 의한 것인지, 장애 시 동작한 로컬 대체 룰베이스(Local)에 의한 것인지 명시해 오판을 차단합니다.
+*   **구현 설계**:
+    *   `flow_ui.py` 에 `update_engine_mode(self, mode: str)` 메소드를 추가합니다.
+        *   `self.title_label.setText(f"PrismFlow Agent ({mode})")` 로 텍스트를 갱신하고 `self.title_label.adjustSize()` 를 호출하여 가로폭을 재계산합니다.
+    *   `main.py` 의 `AppCoordinator` 에서 `flow_agent.diagram_updated` 시그널이 발생할 때 호출될 슬롯에서 `self.cli_controller.is_session_limited()` 상태에 따라 `Claude` 또는 `Local` 문자열을 판정하여 `flow_ui.update_engine_mode(mode)`를 전달하도록 배선합니다.
+    *   또한 대시보드 상태 뱃지 업데이트 시 `AgentState.OK` 옆에 "Claude" 혹은 "Local"을 상세 정보로 함께 갱신하도록 연계합니다.
+
+### 14-4. STT 정확도 향상 기획 (Medium/Large 모델 지원 검토)
+*   **분석 및 해결방안**:
+    *   현재 탑재된 `whisper-small-int8-ov` (244MB) 모델은 로컬 연산 속도는 매우 빠르나, 한국어 실음성 전사 정확도가 다소 떨어집니다.
+    *   이를 극복하기 위해 다음 Phase에서 **더 큰 모델의 OpenVINO int8/fp16 양자화 번들** 지원을 확장합니다:
+        *   `whisper-medium-int8-ov` (약 760MB, 대폭 향상된 한국어 이해도)
+        *   `whisper-large-v3-int8-ov` (약 1.5GB, 상용 수준 한국어 전사 정확도)
+    *   Intel Core Ultra 7 258V (Arc GPU 가속 가용) 환경은 VRAM 및 연산 능력이 충분하므로, 설정 화면(`SettingsDialog`)에서 Medium 또는 Large 모델 선택 시 모델 경로에 맞춰 로딩할 수 있는 실엔진 매핑 로직을 확보하고, 필요 시 모델 자동 셋업(Hugging Face 가중치 감지/안내) 파이프라인을 보강합니다.
+
+### 14-5. 검증 계획
+*   **수동 검증**:
+    *   `run.bat` 기동 후 화면에서 Mermaid 차트 영역이 여백 없이 오버레이 창 내부를 꽉 채우는지, 뉴스 자막 글씨가 크게 잘 보이는지, 좌상단 타이틀에 `(Claude)` 또는 `(Local)`이 동적으로 나타나는지 검사합니다.
+*   **회귀 테스트 검증**:
+    *   새로 추가된 UI 콤포넌트 규격에 맞춰 pytest 회귀 테스트를 통과시킵니다.
+    *   검증 명령어: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q`
+
+
 
 
 

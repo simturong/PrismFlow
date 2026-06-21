@@ -36,9 +36,9 @@ class TranslucentOverlay(QWidget):
         self._press_global_pos = QPoint()
         self.resize_margin = 8  # 가장자리 8픽셀 이내 감지
 
-        # 페이드 애니메이션 설정 (기본 불투명도 0.5, 마우스 호버 시 0.95)
-        self.normal_opacity = 0.5
-        self.hover_opacity = 0.95
+        # 페이드 애니메이션 설정 (기본 불투명도 1.0(가장 불투명), 마우스 호버 시 1.0)
+        self.normal_opacity = 1.0
+        self.hover_opacity = 1.0
         self.setWindowOpacity(self.normal_opacity)
 
         self.fade_animation = QPropertyAnimation(self, b"windowOpacity")

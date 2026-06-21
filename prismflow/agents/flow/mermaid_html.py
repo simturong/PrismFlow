@@ -21,7 +21,7 @@ def get_mermaid_html() -> str:
         body {
             background-color: transparent;
             margin: 0;
-            padding: 15px;
+            padding: 2px;
             font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
             color: #e0e0e0;
             overflow: auto;
@@ -32,11 +32,11 @@ def get_mermaid_html() -> str:
             align-items: center;
         }
         #diagram-container {
-            width: 95%;
-            height: 90%;
+            width: 100%;
+            height: 100%;
             background: rgba(30, 30, 35, 0.7);
-            border-radius: 16px;
-            padding: 24px;
+            border-radius: 8px;
+            padding: 10px;
             box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);

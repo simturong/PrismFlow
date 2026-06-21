@@ -58,7 +58,7 @@ class FlowUI(TranslucentOverlay):
 
         # [0] 뉴스 요약 자막바 (News Headline Label)
         self.headline_label = QLabel("회의 흐름을 실시간 요약 중입니다...", self)
-        self.headline_label.setFixedHeight(24)
+        self.headline_label.setFixedHeight(30)
         self.headline_label.setStyleSheet(
             "background-color: rgba(124, 77, 255, 30);"
             "color: #ffcc00;"
@@ -66,7 +66,7 @@ class FlowUI(TranslucentOverlay):
             "border-radius: 4px;"
             "padding: 2px 10px;"
             "font-family: 'Pretendard', sans-serif;"
-            "font-size: 11px;"
+            "font-size: 13px;"
             "font-weight: bold;"
         )
         layout.addWidget(self.headline_label, 0)
@@ -171,6 +171,11 @@ class FlowUI(TranslucentOverlay):
         """실시간 뉴스 헤드라인 자막을 갱신합니다."""
         if text:
             self.headline_label.setText(text)
+
+    def update_engine_mode(self, mode: str):
+        """좌상단 타이틀 옆에 엔진 모드 (Claude 또는 Local)를 동적으로 표시합니다."""
+        self.title_label.setText(f"PrismFlow Agent ({mode})")
+        self.title_label.adjustSize()
 
     def update_diagram(self, mermaid_code: str):
         """새 Mermaid 코드를 수신하여 깜빡임 없이 동적으로 렌더링한다.
