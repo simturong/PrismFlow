@@ -35,16 +35,23 @@ class ClaudeCLIController:
         # 해석 실패 시 원본 명령을 그대로 사용(존재하지 않으면 subprocess가 예외 → RuntimeError로 변환).
         self._cli_exe = shutil.which(self.config.claude_cli_cmd) or self.config.claude_cli_cmd
         self._session_limited = False
+        # 이 프로세스에서 이미 생성(--session-id)한 CLI 세션 UUID 집합.
+        # 두 번째 호출부터는 --resume를 쓰도록 하여 "Session ID ... is already in use" 충돌을 방지한다.
+        self._created_sessions = set()
 
-    def _log_activity(self, session_id, model, prompt: str, response: str, kind: str):
-        """CLI 교환 1건을 전역 활동 로그에 best-effort로 기록한다(디버그 창용).
-
-        기록은 절대 CLI 실행을 방해하면 안 되므로 모든 예외를 삼킨다. 또한 Qt/허브 임포트를
-        지연(lazy)하여, 허브를 쓰지 않는 단위 테스트에 불필요한 의존을 만들지 않는다.
-        """
+    def _log_request(self, session_id, model, prompt: str):
+        """요청(입력)을 호출 즉시 디버그 로그에 best-effort 기록한다(응답 전에도 실시간 표시)."""
         try:
             from prismflow.core.cli_activity import get_cli_activity_log
-            get_cli_activity_log().record(session_id, model, prompt, response, kind)
+            get_cli_activity_log().record_request(session_id, model, prompt)
+        except Exception:
+            pass
+
+    def _log_response(self, session_id, model, response: str, kind: str = "ok"):
+        """응답(출력)/오류를 완료 시점에 디버그 로그에 best-effort 기록한다(실행을 절대 방해하지 않음)."""
+        try:
+            from prismflow.core.cli_activity import get_cli_activity_log
+            get_cli_activity_log().record_response(session_id, model, response, kind)
         except Exception:
             pass
 
@@ -108,12 +115,13 @@ class ClaudeCLIController:
         실제 실행은 _execute_command_impl에 위임하고, 원본 세션명 기준으로 성공/오류 결과를
         CLI 활동 로그에 기록한다(로그 기록 실패는 무시되어 실행에 영향을 주지 않음).
         """
+        self._log_request(session_id, model, prompt)
         try:
             out = self._execute_command_impl(prompt, session_id, model=model, timeout=timeout, system_prompt=system_prompt)
-            self._log_activity(session_id, model, prompt, out, "ok")
+            self._log_response(session_id, model, out, "ok")
             return out
         except Exception as e:
-            self._log_activity(session_id, model, prompt, str(e), "error")
+            self._log_response(session_id, model, str(e), "error")
             raise
 
     def _execute_command_impl(self, prompt: str, session_id: str, model: Optional[str] = None,
@@ -227,8 +235,7 @@ class ClaudeCLIController:
         session_id = self._normalize_session_id(session_id)
         extra_args = self._build_extra_args(model, system_prompt)
 
-        # 도구 사용(범용 어시스턴트) 모드: 도구 화이트리스트 사전 승인 + 작업 폴더 샌드박스.
-        # 미지정 시(회의 Q&A 모드) 기존 동작과 100% 동일하다.
+        # 도구 사용 모드: 도구 화이트리스트 사전 승인 + 작업 폴더 샌드박스. 미지정 시 기존 텍스트 응답과 동일.
         cwd = self._cli_cwd
         if allowed_tools:
             extra_args += ["--allowedTools"] + list(allowed_tools)
@@ -238,92 +245,88 @@ class ClaudeCLIController:
         if permission_mode:
             extra_args += ["--permission-mode", permission_mode]
 
-        # 세션 존재 여부 확인을 위해 가볍게 확인 (프로브이므로 시스템 프롬프트 없이 경량 인자만 적용)
-        session_exists = False
-        probe_tail = ["--resume", session_id] + list(_CLEAN_CLI_ARGS)
-        if model:
-            probe_tail += ["--model", model]
+        # 요청을 호출 즉시 기록 → 응답 완료 전에도 디버그 창에 실시간으로 보인다.
+        self._log_request(orig_session_id, model, prompt)
 
+        # 세션 결정: 이 프로세스에서 이미 만든 세션이면 --resume, 아니면 --session-id로 생성.
+        # '이미 사용 중' 충돌이 나면(이전 실행에서 만든 세션 등) --resume로 1회 폴백한다.
+        # (기존 프로브 방식은 --resume로 빈 턴을 실제 실행해 세션을 오염시키고 충돌을 유발했음 → 제거.)
+        already = session_id in self._created_sessions
+        candidates = [True] if already else [False, True]
+
+        collected = []
+        last_err = ""
         try:
-            res = self._run_once(probe_tail, "Session check", timeout=5)
-            if res.returncode == 0:
-                session_exists = True
-            elif "No conversation found" not in res.stderr:
-                session_exists = True
-        except Exception:
-            session_exists = True
+            for as_resume in candidates:
+                flag = ["--resume", session_id] if as_resume else ["--session-id", session_id]
+                cmd = [self._cli_exe, "-p"] + flag + extra_args
+                logger.debug(f"Executing Claude CLI Stream: {' '.join(cmd)}")
 
-        if session_exists:
-            tail = ["--resume", session_id] + extra_args
-        else:
-            tail = ["--session-id", session_id] + extra_args
-
-        cmd = [self._cli_exe, "-p"] + tail
-        logger.debug(f"Executing Claude CLI Stream: {' '.join(cmd)}")
-
-        import time
-        max_retries = 3
-        delay = 1.0
-        proc = None
-        last_exception = None
-
-        try:
-            for attempt in range(max_retries):
                 try:
-                    # 프롬프트는 명령줄 인자가 아니라 STDIN으로 전달한다(Windows 다중줄 인자 훼손 방지).
                     proc = subprocess.Popen(
-                        cmd,
-                        stdin=subprocess.PIPE,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True,
-                        encoding='utf-8',
-                        errors='ignore',
-                        shell=False,
-                        cwd=cwd
+                        cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                        text=True, encoding='utf-8', errors='ignore', shell=False, cwd=cwd,
                     )
-                    proc.stdin.write(prompt)
-                    proc.stdin.close()
-                    break
                 except Exception as e:
-                    last_exception = e
-                    # 실행 파일 부재/권한 오류 등 영구적 실패는 재시도해도 무의미하므로 즉시 중단합니다.
                     if self._is_permanent_launch_error(e):
-                        logger.error(f"Claude CLI Stream executable could not be launched: {e}")
-                        break
-                    if attempt == max_retries - 1:
-                        break
-                    logger.warning(f"Claude CLI Popen temporary failure on attempt {attempt+1}: {e}. Retrying in {delay}s...")
-                    time.sleep(delay)
-                    delay *= 2
-    
-            if proc is None:
-                raise last_exception or RuntimeError("Failed to start Claude CLI Stream process after retries.")
+                        raise RuntimeError(f"Claude CLI Stream executable not found: {e}") from e
+                    raise
+                proc.stdin.write(prompt)
+                proc.stdin.close()
 
-            collected = []  # 디버그 활동 로그용으로 스트리밍 응답을 누적
-            for line in iter(proc.stdout.readline, ''):
-                collected.append(line)
-                yield line
-
-            proc.stdout.close()
-            proc.wait()
-
-            if proc.returncode != 0:
-                err = proc.stderr.read().strip()
-                proc.stderr.close()
-                if err:
-                    if "session limit" in err.lower() or "limit" in err.lower() or "reset" in err.lower():
+                # 첫 줄을 읽어 즉시 실패(세션 충돌 등)와 정상 스트리밍을 구분한다.
+                first = proc.stdout.readline()
+                if first == "":
+                    proc.stdout.close()
+                    proc.wait()
+                    err = (proc.stderr.read() or "").strip()
+                    proc.stderr.close()
+                    last_err = err
+                    el = err.lower()
+                    if "session limit" in el or "limit" in el or "reset" in el:
                         self._session_limited = True
-                    raise RuntimeError(f"Claude CLI Stream failed: {err}")
-            proc.stderr.close()
-            # 정상 완료: 원본 세션명 기준으로 누적 응답을 활동 로그에 기록
-            self._log_activity(orig_session_id, model, prompt, "".join(collected), "ok")
+                    # 세션이 이미 존재 → 다음 후보(--resume)로 재시도
+                    if (not as_resume) and ("already in use" in el or "already exists" in el):
+                        self._created_sessions.add(session_id)
+                        continue
+                    if proc.returncode != 0 and err:
+                        raise RuntimeError(f"Claude CLI Stream failed: {err}")
+                    # 빈 응답이지만 정상 종료
+                    self._created_sessions.add(session_id)
+                    self._log_response(orig_session_id, model, "", "ok")
+                    return
+
+                # 정상 스트리밍 시작
+                self._created_sessions.add(session_id)
+                collected.append(first)
+                yield first
+                for line in iter(proc.stdout.readline, ''):
+                    collected.append(line)
+                    yield line
+                proc.stdout.close()
+                proc.wait()
+                if proc.returncode != 0:
+                    err = (proc.stderr.read() or "").strip()
+                    proc.stderr.close()
+                    el = err.lower()
+                    if "session limit" in el or "limit" in el or "reset" in el:
+                        self._session_limited = True
+                    if err:
+                        raise RuntimeError(f"Claude CLI Stream failed: {err}")
+                else:
+                    proc.stderr.close()
+                self._log_response(orig_session_id, model, "".join(collected), "ok")
+                return
+
+            # 모든 후보 소진(세션 충돌이 끝내 해소되지 않음)
+            raise RuntimeError(f"Claude CLI Stream failed: {last_err or 'unknown error'}")
         except Exception as e:
             err_str = str(e)
-            if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
+            el = err_str.lower()
+            if "session limit" in el or "limit" in el or "reset" in el:
                 self._session_limited = True
             logger.error(f"Failed to run Claude CLI Stream: {err_str}")
-            self._log_activity(orig_session_id, model, prompt, err_str, "error")
+            self._log_response(orig_session_id, model, err_str, "error")
             raise RuntimeError(f"Failed to run Claude CLI Stream: {err_str}") from e
 
     def is_session_limited(self) -> bool:

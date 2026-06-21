@@ -3,7 +3,7 @@ import re
 from typing import Optional
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTextBrowser,
-    QLineEdit, QPushButton, QFrame, QGraphicsOpacityEffect, QComboBox
+    QLineEdit, QPushButton, QFrame, QGraphicsOpacityEffect, QFileDialog
 )
 from PySide6.QtCore import Qt, QPropertyAnimation, QAbstractAnimation, QEasingCurve
 from prismflow.ui_common.overlay import TranslucentOverlay
@@ -76,7 +76,7 @@ class ChatUI(TranslucentOverlay):
         self.messages = []
         self._current_response_text = ""
         
-        self.setWindowTitle("PrismFlow - AI Assistant")
+        self.setWindowTitle("PrismFlow Chat Agent")
         self.resize(420, 580)
         
         self.init_ui()
@@ -88,10 +88,10 @@ class ChatUI(TranslucentOverlay):
         layout.setContentsMargins(12, 32, 12, 12)
         layout.setSpacing(8)
         
-        # 2. 상단 타이틀바 ( 제목 + 모드 토글 )
+        # 2. 상단 타이틀바 ( 제목 + 작업폴더 + 회의정보 )
         title_layout = QHBoxLayout()
         title_layout.setSpacing(8)
-        self.title_label = QLabel("PrismFlow Assistant", self)
+        self.title_label = QLabel("PrismFlow Chat Agent", self)
         self.title_label.setStyleSheet("""
             color: #ffffff;
             font-weight: bold;
@@ -100,22 +100,19 @@ class ChatUI(TranslucentOverlay):
             background: transparent;
         """)
 
-        # 모드 토글: 회의 Q&A(도구 금지) ↔ 범용 작업(웹 검색 + 작업 폴더 파일 도구)
-        self.mode_combo = QComboBox(self)
-        self.mode_combo.addItems(["회의 Q&A", "범용 작업"])
-        self.mode_combo.setToolTip("회의 Q&A: 회의 발화 기반 답변(도구 없음)\n범용 작업: 웹 검색 + 작업 폴더 내 파일 도구 사용")
-        self.mode_combo.setStyleSheet("""
-            QComboBox {
+        # 작업 폴더 선택 버튼 — 웹 검색·파일 도구가 작업할 폴더(샌드박스)를 사용자가 지정.
+        self.workspace_btn = QPushButton("\U0001F4C1 작업폴더", self)
+        self.workspace_btn.setToolTip("웹 검색·파일 도구가 작업할 폴더를 선택합니다")
+        self.workspace_btn.setCursor(Qt.PointingHandCursor)
+        self.workspace_btn.setStyleSheet("""
+            QPushButton {
                 background: rgba(30,30,40,200); color: #e2e8f0;
                 border: 1px solid rgba(255,255,255,0.12); border-radius: 6px;
-                padding: 2px 8px; font-size: 11px;
+                padding: 3px 10px; font-size: 11px;
             }
-            QComboBox::drop-down { border: none; width: 16px; }
-            QComboBox QAbstractItemView {
-                background: #1e1e26; color: #e2e8f0; selection-background-color: #7c4dff;
-            }
+            QPushButton:hover { background: rgba(124,77,255,0.35); }
         """)
-        self.mode_combo.currentTextChanged.connect(self.on_mode_changed)
+        self.workspace_btn.clicked.connect(self.on_pick_workspace)
 
         # 회의정보 라벨 — 별도 줄을 쓰지 않고 타이틀 행 우측에 같은 줄로 배치(세로 줄 낭비 제거).
         # 한 줄에 들어가도록 컴팩트 표기(상태·발화 수·화자 수). 코디네이터가 갱신.
@@ -127,7 +124,7 @@ class ChatUI(TranslucentOverlay):
         self.meeting_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         title_layout.addWidget(self.title_label)
-        title_layout.addWidget(self.mode_combo)
+        title_layout.addWidget(self.workspace_btn)
         title_layout.addStretch()
         title_layout.addWidget(self.meeting_info_label)
         layout.addLayout(title_layout)
@@ -220,25 +217,16 @@ class ChatUI(TranslucentOverlay):
         self.agent.error_occurred.connect(self.on_error)
         self.agent.session_initialized.connect(self.on_session_initialized)
         
-    def on_mode_changed(self, label: str):
-        """모드 토글 변경 처리: 에이전트 모드를 바꾸고 안내 메시지를 표시한다."""
-        from prismflow.agents.chat.chat_agent import MODE_MEETING, MODE_AGENT
-        if label == "범용 작업":
-            self.agent.set_mode(MODE_AGENT)
-            try:
-                ws = self.agent.workspace_dir()
-            except Exception:
-                ws = "(작업 폴더)"
-            self.append_message(
-                "System",
-                f"범용 작업 모드로 전환했습니다. 웹 검색과 작업 폴더 내 파일(읽기/쓰기/수정/이동) 도구를 사용합니다. "
-                f"작업 폴더: {ws}"
-            )
-            self.input_field.setPlaceholderText("범용 작업 요청을 입력하세요 (웹 검색·파일 작업 가능)")
-        else:
-            self.agent.set_mode(MODE_MEETING)
-            self.append_message("System", "회의 Q&A 모드로 전환했습니다. 회의 발화 맥락에 근거해 답변합니다(도구 미사용).")
-            self.input_field.setPlaceholderText("메시지를 입력하세요... (Enter 전송)")
+    def on_pick_workspace(self):
+        """작업 폴더 선택 대화상자를 열어 웹/파일 도구의 작업 폴더를 지정·저장한다."""
+        try:
+            current = self.agent.workspace_dir()
+        except Exception:
+            current = ""
+        path = QFileDialog.getExistingDirectory(self, "작업 폴더 선택", current)
+        if path:
+            self.agent.set_workspace_dir(path)
+            self.append_message("System", f"작업 폴더를 설정했습니다: {path}\n(웹 검색·파일 도구가 이 폴더에서 동작합니다.)")
 
     def set_meeting_info(self, text: str):
         """회의정보 스트립을 갱신한다(코디네이터가 회의 시작/발화/종료 시 호출)."""

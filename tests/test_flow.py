@@ -21,7 +21,7 @@ def test_mermaid_html_generation():
 def test_flow_ui_init(q_app):
     """FlowUI 로드 및 다이어그램 업데이트 호출 검증"""
     ui = FlowUI()
-    assert ui.windowTitle() == "PrismFlow - Meeting Map"
+    assert ui.windowTitle() == "PrismFlow Agent"
     assert ui.web_view is not None
     
     # 예외 없이 실행되는지 테스트

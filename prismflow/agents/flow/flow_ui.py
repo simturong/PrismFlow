@@ -3,7 +3,7 @@ import base64
 import html
 import logging
 from pathlib import Path
-from PySide6.QtWidgets import QVBoxLayout, QTextBrowser
+from PySide6.QtWidgets import QVBoxLayout, QTextBrowser, QLabel
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
@@ -38,42 +38,58 @@ _MAX_TRANSCRIPT_LINES = 50
 
 
 class FlowUI(TranslucentOverlay):
-    """Mermaid 차트(4/6) + 확정 전사 기록(1/6) + 에이전트 상태(1/6) 3분할 투명 오버레이 GUI."""
+    """흐름도(블록도)가 세로의 ~90%를 차지하고, 그 아래 얇은 확정 전사 스트립 + 한 줄 에이전트 상태를 둔 투명 오버레이.
+
+    창 이름은 'PrismFlow Agent'로, 좌상단에 떠 있는 라벨로 표기한다.
+    """
 
     def __init__(self, hub=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("PrismFlow - Meeting Map")
+        self.setWindowTitle("PrismFlow Agent")
         self.resize(700, 680)
         self.hub = hub
         self._transcript_lines = []
 
-        # 내부 레이아웃: 세로 4 : 1 : 1 (Mermaid : 전사 기록 : 에이전트 상태)
+        # 내부 레이아웃: 흐름도(블록도)가 세로의 ~90%를 차지하고, 전사 기록과 에이전트 상태는 최소 높이.
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 32, 10, 10)
+        layout.setContentsMargins(10, 32, 10, 8)
         layout.setSpacing(6)
 
-        # [1] Mermaid 차트 (4/6) — QWebEngineView
+        # [1] Mermaid 차트 — QWebEngineView. 유일한 신축(stretch) 영역이라 늘어난 세로 공간을 거의 다 흡수한다.
         self.web_view = QWebEngineView(self)
         self.web_view.setAttribute(Qt.WA_TranslucentBackground, True)
         self.web_view.setStyleSheet("background: transparent;")
         self.web_view.page().setBackgroundColor(Qt.transparent)
         self.web_view.setHtml(get_mermaid_html(), _RESOURCES_BASE_URL)
-        layout.addWidget(self.web_view, 4)
+        layout.addWidget(self.web_view, 1)
 
-        # [2] 확정 전사 기록 (1/6) — 누적 스크롤 뷰
+        # [2] 확정 전사 기록 — 얇은 고정 스트립(흐름도 공간을 빼앗지 않도록 최대 높이 제한)
         self.transcript_view = QTextBrowser(self)
         self.transcript_view.setStyleSheet(_TRANSCRIPT_STYLE)
-        layout.addWidget(self.transcript_view, 1)
+        self.transcript_view.setMaximumHeight(40)
+        layout.addWidget(self.transcript_view, 0)
 
-        # [3] 에이전트 상태 대시보드 (1/6)
-        # 상태 패널은 5개 뱃지(2열×3행 + 헤더)로 내용 높이가 고정적이다. 창을 세로로 키울 때
-        # 이 패널까지 함께 커지면 정작 흐름도(블록도)가 차지할 공간이 줄어든다. 따라서 최대 높이를
-        # 컴팩트하게 제한하여, 늘어난 세로 공간은 대부분 상단 Mermaid(4)와 전사 기록(1)이 흡수하도록 한다.
+        # [3] 에이전트 상태 대시보드 — 한 줄(가로) 최소 높이
         self.status_panel = AgentStatusPanel(hub=hub, parent=self)
-        self.status_panel.setMaximumHeight(112)
-        layout.addWidget(self.status_panel, 1)
+        self.status_panel.setFixedHeight(28)
+        layout.addWidget(self.status_panel, 0)
+
+        # 좌상단에 떠 있는 창 이름(레이아웃 공간을 차지하지 않도록 절대 배치) — 흐름도 90% 확보에 기여
+        self.title_label = QLabel("PrismFlow Agent", self)
+        self.title_label.setStyleSheet(
+            "color: #e2e8f0; font-weight: bold; font-size: 12px; background: transparent;"
+            " font-family: 'Segoe UI', Arial, sans-serif;"
+        )
+        self.title_label.move(16, 9)
+        self.title_label.adjustSize()
+        self.title_label.raise_()
 
         self._render_transcripts()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 떠 있는 제목이 항상 보이도록 z-order 유지
+        self.title_label.raise_()
 
     # -------------------- 확정 전사 기록 --------------------
     def add_transcript(self, speaker: str, text: str):

@@ -128,9 +128,7 @@ class CliLogWindow(QWidget):
     def _format_entry(self, entry: dict) -> str:
         agent = entry.get("agent", "CLI")
         color = _AGENT_COLORS.get(agent, "#94a3b8")
-        is_err = entry.get("kind") == "error"
-        head_resp_color = "#ff6b6b" if is_err else "#7ee787"
-        resp_label = "오류" if is_err else "응답"
+        kind = entry.get("kind", "ok")
 
         def trunc(s: str) -> str:
             s = s or ""
@@ -138,18 +136,25 @@ class CliLogWindow(QWidget):
                 return s[:_MAX_FIELD_CHARS] + f"\n… (생략 {len(s) - _MAX_FIELD_CHARS}자)"
             return s
 
-        prompt = html.escape(trunc(entry.get("prompt", "")))
-        response = html.escape(trunc(entry.get("response", "")))
         pre = ("white-space: pre-wrap; word-wrap: break-word; margin: 2px 0 6px 0;"
                " padding: 4px 6px; background: rgba(255,255,255,0.03); border-radius: 4px;")
-        return (
+        head = (
             "<div style='margin-top:8px; border-top:1px solid rgba(255,255,255,0.06); padding-top:6px;'>"
-            f"<div><span style='color:#64748b;'>{html.escape(str(entry.get('time','')))}</span> "
+            f"<span style='color:#64748b;'>{html.escape(str(entry.get('time','')))}</span> "
             f"<b style='color:{color};'>[{html.escape(agent)}]</b> "
             f"<span style='color:#64748b;'>model={html.escape(str(entry.get('model','-')))}</span></div>"
-            f"<div style='color:#7aa2f7; margin-top:2px;'>▶ 요청</div>"
-            f"<div style='color:#c9d1d9; {pre}'>{prompt}</div>"
-            f"<div style='color:{head_resp_color};'>◀ {resp_label}</div>"
-            f"<div style='color:#c9d1d9; {pre}'>{response}</div>"
-            "</div>"
         )
+
+        def block(label_html, body):
+            return (f"{label_html}<div style='color:#c9d1d9; {pre}'>{html.escape(trunc(body))}</div>")
+
+        if kind == "request":
+            return head + block("<div style='color:#7aa2f7;'>▶ 요청</div>", entry.get("prompt", ""))
+        if kind == "error":
+            return head + block("<div style='color:#ff6b6b;'>◀ 오류</div>", entry.get("response", ""))
+        if kind == "response":
+            return head + block("<div style='color:#7ee787;'>◀ 응답</div>", entry.get("response", ""))
+        # 하위호환: 요청+응답 합본
+        return (head
+                + block("<div style='color:#7aa2f7;'>▶ 요청</div>", entry.get("prompt", ""))
+                + block("<div style='color:#7ee787;'>◀ 응답</div>", entry.get("response", "")))

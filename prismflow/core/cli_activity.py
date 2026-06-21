@@ -43,15 +43,14 @@ class CliActivityLog(QObject):
         super().__init__(parent)
         self._entries = []
 
-    def record(self, session_id, model, prompt: str, response: str, kind: str = "ok"):
-        """완료된 CLI 교환 1건을 기록한다. kind는 'ok'(정상) 또는 'error'(실패)."""
+    def _push(self, session_id, model, kind: str, prompt: str, response: str):
         import datetime
         entry = {
             "time": datetime.datetime.now().strftime("%H:%M:%S"),
             "agent": agent_label_for_session(session_id),
             "session": str(session_id or ""),
             "model": str(model or "-"),
-            "kind": kind if kind in ("ok", "error") else "ok",
+            "kind": kind,
             "prompt": prompt or "",
             "response": response or "",
         }
@@ -60,6 +59,18 @@ class CliActivityLog(QObject):
             # 가장 오래된 항목부터 버려 상한을 유지한다.
             self._entries = self._entries[-_MAX_ENTRIES:]
         self.entry_added.emit(entry)
+
+    def record_request(self, session_id, model, prompt: str):
+        """요청(입력)을 호출 즉시 기록한다 → 응답이 오기 전에도 디버그 창에 실시간으로 보인다."""
+        self._push(session_id, model, "request", prompt, "")
+
+    def record_response(self, session_id, model, response: str, kind: str = "ok"):
+        """응답(출력) 또는 오류를 완료 시점에 기록한다. kind는 'ok' 또는 'error'."""
+        self._push(session_id, model, "error" if kind == "error" else "response", "", response)
+
+    def record(self, session_id, model, prompt: str, response: str, kind: str = "ok"):
+        """완료된 CLI 교환 1건(요청+응답)을 한 엔트리로 기록한다(하위호환)."""
+        self._push(session_id, model, kind if kind in ("ok", "error") else "ok", prompt, response)
 
     def entries(self) -> list:
         """현재까지 보관된 엔트리 사본을 반환한다(창 초기 로드용)."""

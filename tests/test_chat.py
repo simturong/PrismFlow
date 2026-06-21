@@ -6,7 +6,7 @@ from PySide6.QtCore import QEventLoop, QTimer
 from prismflow.core.context import MeetingContext
 from prismflow.core.db import DatabaseManager
 from prismflow.core.cli_controller import ClaudeCLIController
-from prismflow.agents.chat.chat_agent import ChatAgent, MODE_MEETING, MODE_AGENT
+from prismflow.agents.chat.chat_agent import ChatAgent
 from prismflow.agents.chat.chat_ui import ChatUI, markdown_to_html
 
 def test_markdown_to_html():
@@ -28,7 +28,7 @@ def test_chat_ui_init(q_app, temp_config):
     agent = ChatAgent(context=context, ingest_interval_ms=100)
     ui = ChatUI(agent=agent)
     
-    assert ui.windowTitle() == "PrismFlow - AI Assistant"
+    assert ui.windowTitle() == "PrismFlow Chat Agent"
     assert ui.chat_history is not None
     assert ui.input_field is not None
     assert ui.loading_label is not None
@@ -91,7 +91,7 @@ def test_chat_agent_qna_and_unsubmitted_merge(temp_config):
     mock_cli.config = temp_config
     mock_cli.is_session_limited.return_value = False
     
-    def fake_stream(prompt, session_id, model, system_prompt=None):
+    def fake_stream(prompt, session_id, model=None, system_prompt=None, **kwargs):
         yield "이것은 "
         yield "답변"
         yield "입니다."
@@ -150,7 +150,7 @@ def test_chat_ui_integration(q_app, temp_config):
     mock_cli.config = temp_config
     mock_cli.is_session_limited.return_value = False
     
-    def fake_stream(prompt, session_id, model, system_prompt=None):
+    def fake_stream(prompt, session_id, model=None, system_prompt=None, **kwargs):
         yield "안녕"
         yield "하세요"
         
@@ -184,16 +184,16 @@ def test_chat_ui_integration(q_app, temp_config):
     context.end_meeting()
     context.reset()
 
-def test_chat_agent_general_mode_uses_tools(temp_config):
-    """(P8) 범용 모드는 회의 맥락 주입 없이 도구 화이트리스트+작업폴더 샌드박스로 CLI를 호출한다.
+def test_chat_agent_unified_qna_uses_tools_and_context(temp_config):
+    """(P6 통합) 단일 회의 Q&A 흐름이 회의 맥락을 주입하면서도 웹/파일 도구+작업폴더를 함께 넘긴다.
 
-    핵심 검증: agent-session 분리, 웹/파일 도구 사전 승인, work_dir 전달, Sonnet 모델,
-    그리고 회의 발화 맥락이 프롬프트에 주입되지 않음(범용 작업이므로).
+    핵심 검증: chat-session 단일 세션, 도구 화이트리스트 사전 승인, work_dir(작업폴더) 전달,
+    acceptEdits 권한, 그리고 회의 발화/지도 맥락이 프롬프트에 함께 주입됨.
     """
     context = MeetingContext()
     context.reset()
     context.db_manager = DatabaseManager(temp_config.db_path)
-    context.start_meeting("session_general", "범용 모드 테스트")
+    context.start_meeting("session_unified", "통합 모드 테스트")
     context.add_transcript("Speaker_00", "이건 회의 발화 맥락입니다")
 
     mock_cli = MagicMock(spec=ClaudeCLIController)
@@ -212,7 +212,6 @@ def test_chat_agent_general_mode_uses_tools(temp_config):
     mock_cli.execute_command_stream = fake_stream
 
     agent = ChatAgent(context=context, cli_controller=mock_cli)
-    agent.set_mode(MODE_AGENT)
 
     finished = []
     agent.finished.connect(finished.append)
@@ -226,22 +225,24 @@ def test_chat_agent_general_mode_uses_tools(temp_config):
         loop.exec()
 
     assert finished == ["작업 완료"]
-    assert captured["session_id"].startswith("agent-session-")
-    assert captured["model"] == "claude-sonnet-4-6"
+    # 단일 회의 세션을 일관되게 사용 (agent-session 분리 없음 → '이미 사용 중' 충돌 방지)
+    assert captured["session_id"].startswith("chat-session-")
     assert captured["permission_mode"] == "acceptEdits"
     assert captured["allowed_tools"] and "WebSearch" in captured["allowed_tools"]
     assert "Write" in captured["allowed_tools"] and "Read" in captured["allowed_tools"]
     assert captured["work_dir"] and captured["work_dir"].endswith("Workspace")
-    # 범용 모드는 회의 발화 맥락을 주입하지 않는다.
-    assert "회의 발화 맥락" not in captured["prompt"]
-    assert "최근 주요 대화 내역" not in captured["prompt"]
+    # 회의 맥락은 그대로 함께 주입된다(통합).
+    assert "최근 주요 대화 내역" in captured["prompt"]
+    assert "이건 회의 발화 맥락입니다" in captured["prompt"]
+    assert "작업 폴더" in captured["prompt"]
 
     context.end_meeting()
     context.reset()
 
 
-def test_chat_ui_mode_toggle_and_meeting_info(q_app, temp_config):
-    """(P7/P8) 모드 토글이 에이전트 모드를 바꾸고, 회의정보 스트립이 갱신되는지 검증."""
+def test_chat_ui_workspace_button_and_meeting_info(q_app, temp_config, tmp_path, monkeypatch):
+    """(P1/P6/P7) 창 제목·작업폴더 선택·회의정보 스트립을 검증."""
+    from PySide6.QtWidgets import QFileDialog
     context = MeetingContext()
     context.reset()
     context.db_manager = DatabaseManager(temp_config.db_path)
@@ -253,15 +254,20 @@ def test_chat_ui_mode_toggle_and_meeting_info(q_app, temp_config):
     agent = ChatAgent(context=context, cli_controller=mock_cli)
     ui = ChatUI(agent=agent)
 
+    # 창 이름 명기
+    assert ui.windowTitle() == "PrismFlow Chat Agent"
+    assert ui.title_label.text() == "PrismFlow Chat Agent"
+
     # 회의정보 스트립 갱신
-    ui.set_meeting_info("🟢 회의 중 · 세션 X · 발화 3 · 화자 2")
+    ui.set_meeting_info("🟢 회의 중 · 발화 3 · 화자 2")
     assert "발화 3" in ui.meeting_info_label.text()
 
-    # 모드 토글 → 에이전트 모드 전환
-    ui.mode_combo.setCurrentText("범용 작업")
-    assert agent.mode == MODE_AGENT
-    ui.mode_combo.setCurrentText("회의 Q&A")
-    assert agent.mode == MODE_MEETING
+    # 작업 폴더 선택 → 에이전트에 저장(설정 영속화)
+    chosen = str(tmp_path / "MyWork")
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: chosen))
+    ui.on_pick_workspace()
+    assert context.db_manager.get_setting("workspace_dir") == chosen
+    assert agent.workspace_dir() == chosen
 
     ui.close()
     context.reset()
@@ -283,7 +289,7 @@ def test_chat_agent_cleanup(temp_config):
     mock_cli.is_session_limited.return_value = False
 
     # Q&A 스트림이 잠시 지속되도록 가짜 스트림 구성 (cleanup이 실제로 합류 대기하는지 확인)
-    def fake_stream(prompt, session_id, model, system_prompt=None):
+    def fake_stream(prompt, session_id, model=None, system_prompt=None, **kwargs):
         for _ in range(3):
             time.sleep(0.05)
             yield "토큰"

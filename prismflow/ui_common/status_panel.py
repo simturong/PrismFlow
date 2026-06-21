@@ -3,7 +3,7 @@
 AgentStatusHub의 status_changed 신호를 구독하여 5개 에이전트의 상태 뱃지를 실시간 갱신한다.
 FlowUI 하단 1/6 영역에 배치되어, 각 에이전트가 정상 동작하는지 한눈에 점검할 수 있게 한다.
 """
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QGridLayout, QLabel
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QLabel
 from PySide6.QtCore import Qt
 
 from prismflow.core.agent_status import AgentState, STATE_META, AGENTS
@@ -36,7 +36,6 @@ class AgentBadge(QWidget):
         layout.addWidget(self.dot)
         layout.addWidget(self.name)
         layout.addWidget(self.detail)
-        layout.addStretch()
 
         self.set_state(AgentState.IDLE, "")
 
@@ -49,31 +48,23 @@ class AgentBadge(QWidget):
 
 
 class AgentStatusPanel(QWidget):
-    """5개 에이전트 상태 뱃지를 2열 그리드로 컴팩트하게 표시하는 패널."""
+    """5개 에이전트 상태 뱃지를 한 줄(가로)로 최소 높이로 표시하는 컴팩트 패널."""
 
     def __init__(self, hub=None, parent=None):
         super().__init__(parent)
         self.hub = hub
         self.badges = {}
 
-        root = QGridLayout(self)
-        root.setContentsMargins(6, 4, 6, 4)
-        root.setHorizontalSpacing(6)
-        root.setVerticalSpacing(2)
+        root = QHBoxLayout(self)
+        root.setContentsMargins(8, 2, 8, 2)
+        root.setSpacing(10)
 
-        # 헤더
-        header = QLabel("에이전트 상태", self)
-        header.setStyleSheet(
-            "color: #64748b; font-size: 9px; font-weight: bold; background: transparent;"
-            " font-family: 'Pretendard', 'Malgun Gothic', sans-serif;"
-        )
-        root.addWidget(header, 0, 0, 1, 2)
-
-        # 5개 뱃지를 2열 그리드로 배치 (1/6 높이에 맞춤)
-        for i, (key, label) in enumerate(AGENTS):
+        # 5개 뱃지를 한 줄에 나란히 (헤더 없이 최소 높이)
+        for key, label in AGENTS:
             badge = AgentBadge(key, label, self)
             self.badges[key] = badge
-            root.addWidget(badge, 1 + i // 2, i % 2)
+            root.addWidget(badge)
+        root.addStretch()
 
         self.setStyleSheet(
             "AgentStatusPanel {"
