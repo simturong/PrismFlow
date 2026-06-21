@@ -903,6 +903,51 @@ endlocal
 *   **정량적 목표**:
     *   불필요한 백그라운드 프로세스 기동량 90% 이상 절감 및 세션 잠금 대기 시간 0으로 수렴. Q&A 질문 시 순시 커넥션 에러 발생율을 0%에 수렴하게 제어합니다.
 
+---
+
+## 10. 상세 구현 설계서: Phase 10 (에이전트 상태 대시보드 & 오버레이 UX) — ✅ 완료(2026-06-21)
+
+### 10-1. 에이전트 상태 집계 허브 (`core/agent_status.py`)
+*   **설계**: 5개 에이전트(STT·Flow·Chat·i2t·Report)의 4단계 상태(IDLE/OK/WORKING/ERROR)를 한 곳에서 보관하고, 변경 시에만 `status_changed(key, state, detail)` 신호로 **푸시**(폴링 0)하는 `AgentStatusHub(QObject)`를 둔다. 동일 (상태, 상세) 중복은 방출하지 않는다.
+*   **목표**: 에이전트와 UI를 느슨하게 결합(decouple)하여 오버헤드 0 + 테스트 용이성 확보.
+
+### 10-2. 상태 패널 / 녹음 인디케이터 (`ui_common/status_panel.py`, `ui_common/indicators.py`)
+*   **설계**: 색점 + 이름 + 상세 뱃지로 각 에이전트 상태를 표시(`AgentStatusPanel`). `RecordingIndicator`는 `● 녹음 중` 빨간 점멸을 베이스 오버레이에 탑재해 두 반투명창 모두에 노출.
+
+### 10-3. FlowUI 4:1:1 분할 + 코디네이터 신호 배선
+*   **설계**: FlowUI 세로를 Mermaid(4) : 확정 전사 기록(1) : 상태 패널(1)로 재구성. 신규 신호(`FlowAgent.analysis_started/analysis_failed`, `ChatAgent.question_received`)를 추가하고, 코디네이터가 모든 에이전트 상태를 허브로 중계.
+
+### 10-4. (안정화) 싱글톤 시그널 누수 = 세그폴트 근본 해결
+*   **문제**: `AppCoordinator`/`ChatAgent`가 싱글톤 `MeetingContext` 시그널을 `__init__`에서 구독하지만 `cleanup()`에서 끊지 않아, 소멸된 '좀비' 객체가 다음 회의 신호에 반응해 STT(PyAudio)/Flow 스레드를 중복 생성 → access violation.
+*   **해결**: 각 `cleanup()`에서 컨텍스트 시그널을 명시적으로 disconnect + conftest가 매 테스트마다 시그널 슬롯을 비워 백스톱. **불변식**: "새 컨텍스트-시그널 구독자를 추가하면 반드시 cleanup에서 끊는다."
+
+---
+
+## 11. 상세 구현 설계서: Phase 11 (실제 실행 UX 하드닝 · 도구화 · 공개) — ✅ 완료(2026-06-21)
+
+> 사용자가 실제 앱(`main.py`)을 구동하며 캡처와 함께 던진 피드백을, 검증 → 계획 → 실행 → **실측 증명**의 루프로 단계별 커밋. (커밋 단위 Phase A~F)
+
+### 11-A. 오버레이 UX 정비
+*   녹음 인디케이터를 좌상단 → 우상단 컨트롤 묶음(최소화 버튼 옆)으로 이동. **'항상 위(StaysOnTop)' 해제**. **투명도 슬라이더**(20~100%) 추가. FlowUI 상태 패널 최대 높이 제한으로 흐름도가 세로 확대분을 흡수.
+*   **투명도 버그 수정**: `paintEvent` 배경 alpha 180→255로 변경 → 슬라이더를 끝까지 올리면 완전 불투명(비침 0%). windowOpacity가 투명도의 단일 소스.
+
+### 11-B. Flow 실시간성 (`FlowAgent._should_trigger`)
+*   30초 고정 틱을 순수함수 3-way 트리거로 교체 — 최초 즉시 / 주제 전환(발화 ≥3 누적) 시 8초 바닥만 지나면 즉시 / 정기 15초. 주제 전환 지연 ~30초 → ~8초.
+
+### 11-C. CLI 디버그 로그 창 (`core/cli_activity.py`, `ui_common/cli_log_window.py`)
+*   백그라운드 에이전트가 Claude CLI에 주고받는 프롬프트/응답을 색 뱃지로 실시간 표시(개발용). 요청은 호출 즉시(`record_request`), 응답은 완료 시(`record_response`) 분리 방출.
+
+### 11-D/E. 회의 Q&A 도구 통합 + 창 이름/레이아웃
+*   모드 토글 분리안을 폐기하고 **단일 회의 Q&A 흐름으로 통합**: 회의 맥락 주입 + 웹 검색·작업 폴더 파일 도구(읽기/쓰기/수정/이동)를 함께 사용, 작업 폴더는 📁 버튼으로 지정(DB `settings.workspace_dir`).
+*   창 이름 명기: `PrismFlow Agent`(흐름도, 좌상단 떠있는 라벨)·`PrismFlow Chat Agent`. 흐름도 블록이 세로 ~90%, 상태는 한 줄.
+*   **세션 'already in use' 수정**: 세션을 오염시키던 프로브 제거 → `cli_controller._created_sessions`로 결정(최초 `--session-id`, 이후 `--resume`) + 충돌 시 폴백.
+
+### 11-F. 남은 항목 + 공개
+*   **i2t 화면 용어집 STT 교정**(`core/glossary.py`): PPT 슬라이드 텍스트(COM) → `screen_glossary` 테이블 → 같은 문자 체계·유사도 0.8↑ 보수적 근접 보정(과교정 방지).
+*   **회의종료 프리즈 수정**: `FlowAgent.stop(wait_ms)` 바운드 대기 + 코디네이터 백그라운드 배수(drain). **앱 종료 즉시화**: `cli_controller.terminate_all()`로 in-flight 서브프로세스 사살.
+*   **폰트 경고 필터**(`main._install_qt_message_filter`).
+*   **공개**: MIT LICENSE + README(한/영) + GitHub `simturong/PrismFlow` 전체 공개. (조기 커밋된 `.venv` 히스토리는 `git filter-branch`로 제거 후 푸시.)
+
 
 
 

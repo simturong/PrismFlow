@@ -153,4 +153,12 @@
 - [x] 10-5: 코디네이터 신호 배선 — 모든 에이전트 상태를 허브로 중계(Flow `analysis_started/failed`, Chat `question_received` 신규 신호 포함)
 - [x] 10-6: (안정화) 코디네이터/ChatAgent의 컨텍스트 시그널 구독 누수 수정 — 좀비 코디네이터가 후속 회의에 반응해 STT(PyAudio)/Flow 스레드를 중복 생성하던 **access violation(세그폴트) 근본 원인** 제거 + conftest 시그널 격리. 전체 67 passed·3회 연속 무결
 
+## Phase 11: 실제 실행 UX 하드닝 · 도구화 · 공개 (2026-06-21)
+- [x] 11-A: 오버레이 UX — 녹음 표시 우상단 이동, '항상 위' 해제, 투명도 슬라이더, 흐름도 성장 리사이즈, **투명도 슬라이더 끝=완전 불투명 버그 수정**(paintEvent alpha 180→255)
+- [x] 11-B: Flow 실시간성 — `_should_trigger` 3-way(최초 즉시/주제전환 8초 바닥/정기 15초). 주제전환 지연 ~30초→~8초
+- [x] 11-C: CLI 디버그 로그 창(`core/cli_activity.py`, `ui_common/cli_log_window.py`) — 요청 즉시/응답 완료 분리 실시간 표시
+- [x] 11-D/E: 회의 Q&A에 도구 통합(웹검색+작업폴더 파일도구, 📁 폴더 지정), 창 이름 명기(PrismFlow Agent/Chat Agent), 흐름도 ~90%·상태 한 줄, 세션 'already in use' 수정(`_created_sessions`)
+- [x] 11-F: i2t 화면 용어집 STT 교정(`core/glossary.py`+`screen_glossary`), 회의종료 프리즈 수정(bounded stop+drain), 앱종료 즉시화(`terminate_all`), 폰트 경고 필터
+- [x] 11-공개: MIT LICENSE + README(한/영) + GitHub `simturong/PrismFlow` 전체 공개(.venv 히스토리 purge 후 push). 전체 85 passed/1 skipped·3회 연속 무결
+
 
