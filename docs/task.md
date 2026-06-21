@@ -222,3 +222,10 @@
 - [x] 18-8: 트레이 아이콘 변경 및 동적 녹음 점 표시 — `app_icon.png` 트레이 지정 및 회의 진행 시 동적 QPainter로 우측 하단 녹음 점 덧그리기 구현
 - [x] 18-9: 회귀 및 렌더링 검증 — `test_flow.py` 리소스 맵 체크 및 전체 `pytest tests/` 무결 검증
 
+
+
+## Phase 19: Mermaid 박스 크기 최적화, 긴 발화 강제 분절(Force Commit) STT 튜닝 및 줌 툴바 UI 간소화
+- [x] 19-1: Mermaid 박스 최적화 (`wrappingWidth` 220→500로 상향, CSS에 `word-break: keep-all !important;` 및 `white-space: normal !important;` 지정)
+- [x] 19-2: STT 강제 분절 단축 (`max_utt_samples` 및 `interim_window_samples` 20.0s/10.0s → 7.0s 단축 배선)
+- [x] 19-3: 돋보기 툴바 3버튼 간소화 및 맞춤 아이콘 사각형 `◻` (`&#9723;`) 기호 대체
+- [x] 19-4: 단위/통합 테스트 코드 수정 및 PyTest 무결성 검증

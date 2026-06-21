@@ -68,11 +68,16 @@ def get_mermaid_html() -> str:
             max-width: none !important;
             max-height: none !important;
         }
-        /* 노드 라벨 줄바꿈 허용(긴 한국어가 박스를 넘쳐 잘리지 않게) */
+        /* 노드 라벨 줄바꿈 허용, 단어 단위 줄바꿈 방지 및 가로 폭 강제 확장 */
         .mermaid .nodeLabel, .mermaid .label, .mermaid span.nodeLabel {
             white-space: normal !important;
-            word-break: keep-all;
-            line-height: 1.25;
+            word-break: keep-all !important;
+            line-height: 1.3;
+            width: 360px !important;
+            min-width: 360px !important;
+            display: block !important;
+            text-align: center;
+            box-sizing: border-box !important;
         }
         
         /* 다크 Glassmorphism 줌 컨트롤 툴바 */
@@ -130,7 +135,7 @@ def get_mermaid_html() -> str:
                 tertiaryColor: '#1a1a20',
                 fontSize: '20px'
             },
-            flowchart: { useMaxWidth: false, htmlLabels: true, padding: 14, nodeSpacing: 45, rankSpacing: 45, wrappingWidth: 220 },
+            flowchart: { useMaxWidth: false, htmlLabels: true, padding: 14, nodeSpacing: 45, rankSpacing: 45, wrappingWidth: 500 },
             securityLevel: 'loose'
         });
         
@@ -225,14 +230,6 @@ def get_mermaid_html() -> str:
                     panZoomInstance.center();
                 }
             });
-            document.getElementById('btn-zoom-reset').addEventListener('click', function(e) {
-                e.preventDefault();
-                if (panZoomInstance) {
-                    panZoomInstance.reset();
-                    panZoomInstance.fit();
-                    panZoomInstance.center();
-                }
-            });
         });
     </script>
 </head>
@@ -244,12 +241,17 @@ def get_mermaid_html() -> str:
         </div>
     </div>
     
-    <!-- 돋보기 컨트롤 패널 -->
+    <!-- 돋보기 컨트롤 패널 (세련된 라인 SVG 아이콘으로 룩앤필 통합) -->
     <div id="zoom-controls">
-        <button class="zoom-btn" id="btn-zoom-in" title="확대">➕</button>
-        <button class="zoom-btn" id="btn-zoom-out" title="축소">➖</button>
-        <button class="zoom-btn" id="btn-zoom-fit" title="화면맞춤">🎯</button>
-        <button class="zoom-btn" id="btn-zoom-reset" title="1:1 리셋">🔄</button>
+        <button class="zoom-btn" id="btn-zoom-in" title="확대">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+        <button class="zoom-btn" id="btn-zoom-out" title="축소">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+        </button>
+        <button class="zoom-btn" id="btn-zoom-fit" title="화면맞춤">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect></svg>
+        </button>
     </div>
 </body>
 </html>
