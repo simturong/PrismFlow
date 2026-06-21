@@ -216,8 +216,10 @@ class TranslucentOverlay(QWidget):
         from PySide6.QtGui import QPainter, QColor
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
-        # 반투명 어두운 회색 배경 (아름다운 Glassmorphism 기초)
-        painter.setBrush(QColor(30, 30, 30, 180))
+        # 배경 채움은 '불투명'으로 둔다. 투명도는 전적으로 windowOpacity(투명도 슬라이더)가 제어하므로,
+        # 슬라이더를 오른쪽 끝(100%)으로 올리면 창이 전혀 비치지 않고 완전히 불투명해진다.
+        # (배경에 alpha를 또 주면 슬라이더가 100%여도 항상 일부 비쳐 보이는 문제가 생긴다.)
+        painter.setBrush(QColor(30, 30, 30, 255))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(self.rect(), 12, 12)
 
