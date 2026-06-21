@@ -539,7 +539,7 @@ E:\Tak\Gemini\PrismFlow\
   - `cli_controller.execute_command(prompt, session_id="report-session-{session_id}", model="claude-opus-4-8", timeout=120)`를 수행합니다.
   - Opus 모델 특성상 긴 회의록의 경우 추론 시간이 오래 소요될 수 있으므로 타임아웃 값을 120초로 넉넉하게 지정합니다.
 - **날짜별 폴더 구조 저장 및 DB 동기화**:
-  - 오늘 날짜에 해당하는 `YYYY-MM-DD` 형식의 폴더를 `%USERPROFILE%\Documents\PrismFlow\Reports\` 하위에 생성합니다. (예: `C:\Users\sando\Documents\PrismFlow\Reports\2026-06-20\`)
+  - 오늘 날짜에 해당하는 `YYYY-MM-DD` 형식의 폴더를 `%USERPROFILE%\Documents\PrismFlow\Reports\` 하위에 생성합니다. (예: `C:\Users\<사용자>\Documents\PrismFlow\Reports\2026-06-20\`)
   - 생성된 폴더 내에 `report_{session_id}.md` 형태로 파일명을 구성하고, UTF-8 인코딩으로 마크다운 파일을 기록합니다.
   - 파일 저장이 정상적으로 끝나면, SQLite 데이터베이스의 `meeting_sessions` 테이블에서 해당 `session_id` 레코드의 `summary` 컬럼에 생성된 Markdown 보고서 텍스트 전체를 업데이트합니다. (`db_manager.end_session(session_id, end_time=original_end_time, summary=report_content)` 호출)
 - **Windows 연결 프로그램 연동**:
