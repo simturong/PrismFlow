@@ -74,6 +74,9 @@ class AppCoordinator:
         self.stt_worker = None
         self.flow_agent = None
         self.screen_detector = None
+        # 회의 종료 시 진행 중인 CLI 호출 때문에 즉시 끝나지 않는 백그라운드 스레드를 배수(drain)하는 목록.
+        # 참조를 유지해 'Destroyed while thread is still running' 크래시를 막고, 끝나면 자가 제거한다.
+        self._draining = []
         
         # 싱글톤 컨텍스트 상태 변화 연결
         self.context.signals.meeting_started.connect(self._on_meeting_started)
@@ -194,9 +197,9 @@ class AppCoordinator:
             self.stt_worker.stop()
             self.stt_worker = None
 
-        # 2. Flow Agent 종료
+        # 2. Flow Agent 종료 — 진행 중인 CLI 호출이 있으면 UI를 멈추지 않도록 백그라운드로 배수한다.
         if self.flow_agent:
-            self.flow_agent.stop()
+            self._retire_flow_agent(self.flow_agent)
             self.flow_agent = None
 
         # 3. 화면 감지기 종료
@@ -250,6 +253,39 @@ class AppCoordinator:
             return "교정DB✗"
         return "정상"
 
+    def _retire_flow_agent(self, agent):
+        """FlowAgent를 정지 요청하되 메인 스레드를 멈추지 않는다.
+
+        진행 중인 Flow CLI 호출(최대 수십 초)이 있으면 짧게만 바운드 대기하고, 끝나지 않으면 참조를
+        유지한 채 백그라운드로 배수(drain)한다. 또한 배수 중 늦게 도착하는 신호가 리셋된 UI를 건드리지
+        않도록 에이전트의 출력 신호를 먼저 끊는다.
+        """
+        for sig in (agent.diagram_updated, agent.analysis_started, agent.analysis_failed):
+            try:
+                sig.disconnect()
+            except (RuntimeError, TypeError):
+                pass
+        joined = agent.stop(wait_ms=200)
+        if not joined and agent.isRunning():
+            self._draining.append(agent)
+            agent.finished.connect(lambda a=agent: self._on_flow_drained(a))
+            logger.info("FlowAgent busy at meeting end; draining in background to avoid UI freeze.")
+
+    def _on_flow_drained(self, agent):
+        if agent in self._draining:
+            self._draining.remove(agent)
+        logger.info("Background FlowAgent thread drained after meeting end.")
+
+    def _drain_join(self):
+        """앱 종료 시 배수 중인 백그라운드 스레드를 합류 대기시켜 안전하게 회수한다."""
+        for t in list(self._draining):
+            try:
+                if t.isRunning():
+                    t.stop()  # 앱 종료 시점이므로 합류 대기(unbounded)
+            except Exception as e:
+                logger.warning(f"Error while draining background thread: {e}")
+        self._draining.clear()
+
     def cleanup(self):
         """프로그램 종료 시 백그라운드 리소스와 스레드를 안전하게 정리합니다.
 
@@ -267,6 +303,7 @@ class AppCoordinator:
             ("stt_worker", lambda: self.stt_worker and self.stt_worker.stop()),
             ("flow_agent", lambda: self.flow_agent and self.flow_agent.stop()),
             ("screen_detector", lambda: self.screen_detector and self.screen_detector.stop()),
+            ("draining_threads", self._drain_join),
         ]
         for name, step in cleanup_steps:
             try:

@@ -98,10 +98,18 @@ class FlowAgent(QThread):
             return True
         return False
 
-    def stop(self):
-        """에이전트 루프를 안전하게 종료합니다."""
+    def stop(self, wait_ms: Optional[int] = None) -> bool:
+        """에이전트 루프 종료를 요청한다.
+
+        wait_ms=None이면 스레드가 끝날 때까지 합류 대기한다(앱 종료 등). 정수면 그 시간(ms)만
+        바운드 대기하고 합류 여부를 bool로 반환한다. 회의 종료 시 메인 스레드가 진행 중인 Flow
+        CLI 호출(최대 수십 초)에 막혀 프리즈되지 않도록, 코디네이터가 짧은 바운드 대기로 호출한다.
+        """
         self.running = False
-        self.wait()
+        if wait_ms is None:
+            self.wait()
+            return True
+        return bool(self.wait(wait_ms))
 
     def _analyze_and_update(self, transcripts: list):
         """최근 발화 내용 및 화면 맥락을 수집하여 Claude CLI로 Mermaid 코드를 갱신합니다."""

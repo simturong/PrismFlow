@@ -133,6 +133,45 @@ def test_flow_agent_trigger_cadence():
     context.reset()
 
 
+def test_flow_agent_bounded_stop_does_not_block(q_app):
+    """회의 종료 프리즈 방지: 진행 중인 CLI 호출이 있어도 stop(wait_ms)는 바운드 시간 내 반환한다.
+
+    핵심: stop(wait_ms=100)는 합류하지 못하면 False를 반환하되 메인 스레드를 CLI 호출 시간만큼
+    잡아두지 않아야 한다(프리즈 없음). 이후 unbounded stop()으로 안전하게 합류한다.
+    """
+    import time
+    context = MeetingContext()
+    context.reset()
+    context.start_meeting("s_stop_bound", "프리즈 방지")
+    context.add_transcript("Speaker_00", "분석 트리거용 발화")
+
+    mock_cli = MagicMock()
+    mock_cli.is_session_limited.return_value = False
+
+    def slow_execute(*a, **k):
+        time.sleep(1.5)  # 진행 중인 느린 CLI 호출을 모사
+        return "graph TD\nA-->B"
+    mock_cli.execute_command = slow_execute
+
+    agent = FlowAgent(context, mock_cli, check_interval_sec=0.1, burst_threshold=1, min_interval_sec=0.0)
+    agent.start()
+    try:
+        time.sleep(0.5)  # 에이전트가 느린 CLI 호출에 진입할 시간을 준다
+
+        t0 = time.monotonic()
+        joined = agent.stop(wait_ms=100)
+        elapsed = time.monotonic() - t0
+
+        assert joined is False          # 진행 중 호출로 100ms 내 합류 불가
+        assert elapsed < 0.6            # 그러나 바운드 대기라 즉시 반환(메인 스레드 프리즈 없음)
+        assert agent.isRunning() is True
+    finally:
+        agent.stop()                    # unbounded 합류로 안전하게 회수
+        assert agent.isRunning() is False
+        context.end_meeting()
+        context.reset()
+
+
 def test_flow_agent_prompt_integration():
     """FlowAgent 발화 내용 및 시각 지시어/화면 맥락 결합 프롬프트 전달 검증"""
     context = MeetingContext()
