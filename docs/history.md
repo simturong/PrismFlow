@@ -440,3 +440,20 @@
 - **동적 상태 명시의 사용성**: AI 모드(Claude vs Local)를 창 타이틀과 대시보드에 솔직하고 투명하게 노출하여, 사용자가 AI 작동 결과를 오인하거나 한도 초과 오류 상태를 방지할 수 있는 신뢰 체인을 확보했습니다.
 - **중복 자원 점유 방지**: 오디오 장치 등 하드웨어 리소스를 독점 제어해야 하는 STT 엔진이 중복 기동될 경우 디바이스 충돌이 발생할 우려가 있으므로, 프로세스 기동 진입점 단계에서 단일 락으로 중복 실행을 확실히 막는 것이 상용 안정성에 필수적임을 학습했습니다.
 
+
+---
+
+## 🚀 Phase 15: STT 상위 모델(medium/large-v3) 실배선 및 셋업 도구 (2026-06-21)
+
+### 1. 주요 구현 내용
+- **사전 점검으로 실제 공백 식별**: Phase 14-4에서 "기획"으로 남겨 둔 medium/large-v3 지원에 착수하며 먼저 현행 코드를 점검한 결과, 모델 크기→OpenVINO 디렉토리 매핑(`AppConfig.whisper_dir_name`), 설정 다이얼로그 콤보(tiny~large-v3) 및 설치 상태 라벨, `stt_agent._load_openvino_models`의 동적 로드까지 **배선은 이미 완비**되어 있음을 확인했습니다. 즉 진짜 빠진 것은 "상위 모델을 받을 수단"과 "미설치 선택 시의 안내"뿐이었습니다.
+- **출처 정합 발견**: 기존 `whisper-small-int8-ov` 번들의 README가 HuggingFace `OpenVINO` org의 사전 빌드 int8-ov 모델임을 가리키고 있었습니다. 같은 org가 `OpenVINO/whisper-medium-int8-ov`·`OpenVINO/whisper-large-v3-int8-ov`를 제공하므로, optimum/nncf 로컬 변환(무겁고 torch 의존) 없이 이미 설치된 `huggingface_hub`의 `snapshot_download`만으로 small과 동일한 출처·레이아웃을 그대로 재현할 수 있었습니다.
+- **셋업 스크립트(`scripts/setup_whisper_model.py`) 신설**: 모델 크기를 받아 `OpenVINO/whisper-{size}-int8-ov`를 `prismflow/resources/models/whisper-{size}-int8-ov`로 내려받습니다. `--list`로 설치 상태 일람, `--force`로 재다운로드, 이미 설치된 경우 멱등 skip을 지원하며, 순수 헬퍼(`repo_id_for`/`dir_name_for`/`target_dir_for`/`is_installed`)를 분리해 네트워크 없이 단위 테스트가 가능하도록 했습니다.
+- **미설치 안내 UX 보강**: 사용자가 설정에서 medium을 고른 뒤 회의를 시작했는데 가중치가 없으면 기존에는 경로만 알려 주는 에러였습니다. 이제 `_load_openvino_models`가 디렉토리명에서 크기를 역산해 `python scripts/setup_whisper_model.py medium` 설치 명령(+small 폴백)을 그대로 안내하고, 설정 다이얼로그의 "✗ 미설치" 라벨에도 동일 명령을 노출합니다.
+- **medium 실설치 및 검증**: 셋업 스크립트로 `whisper-medium-int8-ov`(748MB)를 실제 다운로드·배치하고, OpenVINO `WhisperPipeline` 로드(CPU 2.1s)까지 스모크 검증했습니다. 대용량 가중치는 `.gitignore` 처리되어 리포지토리에 커밋되지 않습니다.
+
+### 2. 교훈
+- **"기획→구현" 전 반드시 현행 코드부터 점검**: 계획서가 medium/large를 "다음 Phase"로 미뤄 둔 탓에 큰 작업으로 보였지만, 실제로는 배선의 대부분이 이미 존재했습니다. 코드를 먼저 읽었기에 중복 구현 없이 진짜 공백(획득 수단·안내)만 최소 변경으로 채울 수 있었습니다.
+- **기존 산출물의 출처를 따라가면 가장 단순한 해법이 나온다**: small 번들 README 한 줄(공식 사전 빌드 int8-ov)이 optimum 로컬 변환이라는 무거운 우회로를 통째로 제거해 주었습니다.
+- **에러 메시지는 곧 복구 절차여야 한다**: 미설치 에러가 "경로 안내"에서 "복붙 가능한 설치 명령"으로 바뀌면서, 사용자가 막힘 없이 자가 해결할 수 있는 경로를 확보했습니다.
+

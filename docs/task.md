@@ -185,3 +185,10 @@
 - [x] 14-4: (기획 검토 완료) STT 정확도 개선을 위한 whisper medium/large-v3 지원 로직 기획
 - [x] 14-5: 단위/통합 테스트 코드 수정 및 PyTest 무결성 검증
 
+## Phase 15: STT 상위 모델(medium/large-v3) 실배선 및 셋업 도구
+> Phase 14-4에서 기획만 완료한 medium/large-v3 지원을 실제 배선으로 전환. 매핑·설정 UI·로드 배선은 이미 완비되어 있었으므로, 실제 공백이던 ①모델 획득 수단 ②미설치 안내 UX를 채움.
+- [x] 15-1: 모델 셋업 스크립트 `scripts/setup_whisper_model.py` 작성 — small 번들과 동일 출처인 HuggingFace 사전 빌드 int8-ov(`OpenVINO/whisper-{size}-int8-ov`)를 `huggingface_hub.snapshot_download`로 받아 `prismflow/resources/models/whisper-{size}-int8-ov`에 배치. `--list`/`--force`/멱등 skip 지원, optimum/nncf 로컬 변환 불요
+- [x] 15-2: 미설치 모델 선택 시 실행 가능한 안내 — `stt_agent._load_openvino_models`의 FileNotFoundError가 디렉토리명에서 크기를 역산해 `python scripts/setup_whisper_model.py {size}` 설치 명령 안내(+small 폴백 안내), `SettingsDialog` 모델 상태 라벨에도 동일 명령 표기
+- [x] 15-3: medium 모델(`whisper-medium-int8-ov`, ~760MB) 실설치 — 셋업 스크립트로 다운로드/배치 검증 (models/ 는 .gitignore 처리되어 미커밋)
+- [x] 15-4: 회귀 — `tests/test_setup_whisper.py` 신설(매핑이 `AppConfig.whisper_dir_name` 단일 정본과 일치 검증 등 6케이스), 전체 PyTest 무결성 유지
+

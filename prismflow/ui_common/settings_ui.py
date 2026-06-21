@@ -281,7 +281,9 @@ class SettingsDialog(QDialog):
             self.model_status_label.setText(f"✓ 로컬 모델 설치됨: {dir_name}")
             self.model_status_label.setStyleSheet("font-size: 10px; color: #4ade80;")
         else:
-            self.model_status_label.setText(f"✗ 미설치: {dir_name} (Mock 모드 또는 모델 배치 필요)")
+            self.model_status_label.setText(
+                f"✗ 미설치: {dir_name}  설치: python scripts/setup_whisper_model.py {model_size}"
+            )
             self.model_status_label.setStyleSheet("font-size: 10px; color: #fbbf24;")
 
     def browse_cli_path(self):

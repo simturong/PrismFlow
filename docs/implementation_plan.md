@@ -1100,6 +1100,40 @@ endlocal
     *   새로 추가된 UI 콤포넌트 규격에 맞춰 pytest 회귀 테스트를 통과시킵니다.
     *   검증 명령어: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q`
 
+---
+
+### Phase 15: STT 상위 모델(medium/large-v3) 실배선 및 셋업 도구
+
+> Phase 14-4의 기획(medium/large-v3 지원)을 실배선으로 전환한다. 사전 점검 결과
+> **모델 크기→OV 디렉토리 매핑(`AppConfig.whisper_dir_name`)·설정 UI 콤보(tiny~large-v3)·
+> STT 로드(`_load_openvino_models`)·미설치 상태 라벨은 이미 완비**되어 있었다. 따라서
+> 실제 공백인 ①상위 모델을 받을 수단 ②미설치 선택 시 실행 가능한 안내만 채운다.
+
+#### 핵심 발견 (출처 정합)
+*   기존 `whisper-small-int8-ov` 번들의 README가 가리키듯, small은 optimum 로컬 변환이 아니라
+    **HuggingFace `OpenVINO` org가 사전 빌드한 int8-ov 모델**을 그대로 받은 것이다.
+*   동일 org가 `OpenVINO/whisper-medium-int8-ov`, `OpenVINO/whisper-large-v3-int8-ov`를
+    제공하므로, optimum/nncf 로컬 변환 없이 `snapshot_download`만으로 small과 동일한
+    출처·레이아웃을 보장할 수 있다. (이미 설치된 `huggingface_hub`만 의존)
+
+#### 개발 범위
+| 대상 파일 | 작업 내용 |
+|:---|:---|
+| `scripts/setup_whisper_model.py` [NEW] | 모델 크기(tiny/base/small/medium/large-v3) → `OpenVINO/whisper-{size}-int8-ov` repo를 `snapshot_download`으로 `prismflow/resources/models/whisper-{size}-int8-ov`에 배치. `--list`(설치 상태), `--force`(재다운로드), 멱등 skip, 순수 헬퍼(`repo_id_for`/`dir_name_for`/`target_dir_for`/`is_installed`) 분리로 테스트 용이 |
+| `prismflow/agents/stt/stt_agent.py` | `_load_openvino_models`의 모델 미존재 `FileNotFoundError`가 디렉토리명에서 크기를 역산해 `python scripts/setup_whisper_model.py {size}` 설치 명령 + small 폴백을 안내 |
+| `prismflow/ui_common/settings_ui.py` | 모델 상태 라벨의 "✗ 미설치" 문구에 동일 설치 명령을 노출 |
+| `tests/test_setup_whisper.py` [NEW] | 셋업 스크립트 순수 헬퍼 검증(네트워크 미사용): 디렉토리 매핑이 `AppConfig.whisper_dir_name` 단일 정본과 일치, repo id 포맷, UI 콤보 항목 전체 지원, 미지원 크기 거부, 미설치 판정 |
+
+#### 비-목표(Non-goal)
+*   대용량 가중치를 git에 커밋하지 않는다(`prismflow/resources/models/`는 `.gitignore` 처리).
+    배포 시에는 셋업 스크립트 또는 `build_release.py` 번들 단계에서 가중치를 확보한다.
+
+#### ReAct 검증
+```bash
+.venv\Scripts\python.exe scripts/setup_whisper_model.py medium
+.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q
+```
+
 
 
 

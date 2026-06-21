@@ -301,9 +301,13 @@ class RealTimeEngineWorker(QThread):
 
         model_dir = os.path.join(self.config.models_dir, self.config.whisper_model_name)
         if not os.path.isdir(model_dir):
+            # 디렉토리명(whisper-{size}-int8-ov)에서 크기를 역산해 설치 명령을 안내한다.
+            name = self.config.whisper_model_name
+            size = name[len("whisper-"):-len("-int8-ov")] if name.startswith("whisper-") and name.endswith("-int8-ov") else name
             raise FileNotFoundError(
-                f"Whisper 모델 디렉토리를 찾을 수 없습니다: {model_dir}\n"
-                f"OpenVINO 변환 모델을 해당 경로에 배치하세요."
+                f"Whisper '{size}' 모델이 설치되어 있지 않습니다: {model_dir}\n"
+                f"설치: python scripts/setup_whisper_model.py {size}\n"
+                f"(또는 설정에서 small 모델 선택)"
             )
 
         device = self._detect_device()
