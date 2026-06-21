@@ -16,7 +16,7 @@ class SettingsDialog(QDialog):
         self.config = AppConfig.load_default()
         
         self.setWindowTitle("PrismFlow - 설정")
-        self.resize(420, 500)
+        self.resize(420, 560)
         self.setWindowFlags(Qt.Dialog | Qt.WindowCloseButtonHint)
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         
@@ -171,6 +171,34 @@ class SettingsDialog(QDialog):
         path_layout.addLayout(path_input_layout)
         layout.addLayout(path_layout)
         
+        # 6.5 회의 결과물 출력 폴더 경로
+        out_layout = QVBoxLayout()
+        out_label = QLabel("회의 결과물 저장 출력 폴더 경로 (WAV, TXT, MD):", self.container)
+        
+        out_input_layout = QHBoxLayout()
+        self.out_input = QLineEdit(self.container)
+        self.out_btn = QPushButton("찾기", self.container)
+        self.out_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.08);
+                color: #e2e8f0;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 6px;
+                padding: 5px 10px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.15);
+            }
+        """)
+        self.out_btn.clicked.connect(self.browse_output_path)
+        
+        out_input_layout.addWidget(self.out_input)
+        out_input_layout.addWidget(self.out_btn)
+        
+        out_layout.addWidget(out_label)
+        out_layout.addLayout(out_input_layout)
+        layout.addLayout(out_layout)
+        
         layout.addSpacing(10)
         
         # 7. 버튼 (저장 / 취소)
@@ -223,6 +251,7 @@ class SettingsDialog(QDialog):
             self.vad_spin.setValue(self.config.vad_threshold)
             self.hf_input.setText(self.config.hf_token)
             self.path_input.setText(self.config.claude_cli_cmd)
+            self.out_input.setText(self.config.output_dir)
             self._update_model_status(self.model_combo.currentText())
             return
 
@@ -232,7 +261,8 @@ class SettingsDialog(QDialog):
         vad_val = float(db.get_setting("vad_threshold", str(self.config.vad_threshold)))
         hf_token = db.get_setting("hf_token", self.config.hf_token)
         claude_path = db.get_setting("claude_cli_cmd", self.config.claude_cli_cmd)
-
+        output_dir = db.get_setting("output_dir", self.config.output_dir)
+ 
         self.mock_check.setChecked(mock_val in ("1", "true", "yes", "on"))
         self.model_combo.setCurrentText(model)
         # 비호환 레거시 값(CPU/CUDA/OpenVINO 등)은 콤보에 없으면 무시되므로 명시 폴백
@@ -240,6 +270,7 @@ class SettingsDialog(QDialog):
         self.vad_spin.setValue(vad_val)
         self.hf_input.setText(hf_token)
         self.path_input.setText(claude_path)
+        self.out_input.setText(output_dir)
         self._update_model_status(self.model_combo.currentText())
 
     def _update_model_status(self, model_size: str):
@@ -265,6 +296,17 @@ class SettingsDialog(QDialog):
             # Windows 백슬래시 통일
             self.path_input.setText(os.path.normpath(file_path))
             
+    def browse_output_path(self):
+        """폴더 브라우저를 통해 결과물 출력 폴더 경로를 선택합니다."""
+        dir_path = QFileDialog.getExistingDirectory(
+            self, 
+            "회의 결과물 출력 폴더 선택", 
+            self.out_input.text() or os.path.expanduser("~")
+        )
+        if dir_path:
+            # Windows 백슬래시 통일
+            self.out_input.setText(os.path.normpath(dir_path))
+            
     def save_settings(self):
         """UI에서 지정한 설정을 SQLite DB에 저장하고 Config 오브젝트를 갱신합니다."""
         mock_mode = self.mock_check.isChecked()
@@ -273,11 +315,16 @@ class SettingsDialog(QDialog):
         vad_val = str(self.vad_spin.value())
         hf_token = self.hf_input.text().strip()
         claude_path = self.path_input.text().strip()
-
+        output_dir = self.out_input.text().strip()
+ 
         if not claude_path:
             QMessageBox.warning(self, "경고", "Claude CLI 명령어를 입력하십시오.")
             return
-
+            
+        if not output_dir:
+            QMessageBox.warning(self, "경고", "출력 폴더 경로를 입력하십시오.")
+            return
+ 
         db = self.context.db_manager
         if db:
             db.set_setting("stt_mock_mode", "true" if mock_mode else "false")
@@ -286,6 +333,7 @@ class SettingsDialog(QDialog):
             db.set_setting("vad_threshold", vad_val)
             db.set_setting("hf_token", hf_token)
             db.set_setting("claude_cli_cmd", claude_path)
+            db.set_setting("output_dir", output_dir)
 
         # 전역 AppConfig 실시간 동기화 (실엔진은 다음 회의 시작 시 DB값으로 재로드)
         self.config.stt_mock_mode = mock_mode
@@ -294,6 +342,7 @@ class SettingsDialog(QDialog):
         self.config.vad_threshold = float(vad_val)
         self.config.hf_token = hf_token
         self.config.claude_cli_cmd = claude_path
+        self.config.output_dir = output_dir
 
         # 화자분리 파이프라인이 환경변수 HF_TOKEN을 참조하므로 현재 프로세스에도 반영
         if hf_token:

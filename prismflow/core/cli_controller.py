@@ -139,7 +139,8 @@ class ClaudeCLIController:
     def _looks_like_session_limit(text: str) -> bool:
         """오류 텍스트가 Claude CLI 사용량 한도(session limit) 신호인지 판별합니다."""
         t = (text or "").lower()
-        return "session limit" in t or "limit" in t or "reset" in t
+        # 'reset'은 단순 connection reset을 오판하므로 배제하고 limit 관련 명시적 매칭만 수행
+        return "session limit" in t or "rate limit" in t or "credit limit" in t or "usage limit" in t or ("limit" in t and "reached" in t)
 
     @staticmethod
     def _is_permanent_launch_error(exc: Exception) -> bool:
@@ -339,7 +340,7 @@ class ClaudeCLIController:
                         proc.stderr.close()
                         last_err = err
                         el = err.lower()
-                        if "session limit" in el or "limit" in el or "reset" in el:
+                        if self._looks_like_session_limit(el):
                             self._session_limited = True
                         # 세션이 이미 존재 → 다음 후보(--resume)로 재시도
                         if (not as_resume) and ("already in use" in el or "already exists" in el):
@@ -367,7 +368,7 @@ class ClaudeCLIController:
                     err = (proc.stderr.read() or "").strip()
                     proc.stderr.close()
                     el = err.lower()
-                    if "session limit" in el or "limit" in el or "reset" in el:
+                    if self._looks_like_session_limit(el):
                         self._session_limited = True
                     if err:
                         raise RuntimeError(f"Claude CLI Stream failed: {err}")
@@ -380,8 +381,7 @@ class ClaudeCLIController:
             raise RuntimeError(f"Claude CLI Stream failed: {last_err or 'unknown error'}")
         except Exception as e:
             err_str = str(e)
-            el = err_str.lower()
-            if "session limit" in el or "limit" in el or "reset" in el:
+            if self._looks_like_session_limit(err_str):
                 self._session_limited = True
             logger.error(f"Failed to run Claude CLI Stream: {err_str}")
             self._log_response(orig_session_id, model, err_str, "error")

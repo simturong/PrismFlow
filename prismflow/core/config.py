@@ -28,11 +28,15 @@ class AppConfig:
     # 보고서 저장 경로
     docs_save_dir: str = field(default_factory=lambda: str(Path.home() / "Documents" / "PrismFlow" / "Reports"))
 
+    # 세션 출력 경로 (WAV, TXT, MD 파일 통합 폴더)
+    output_dir: str = field(default_factory=lambda: str(Path(__file__).resolve().parents[2] / "output"))
+
     def __post_init__(self):
         # 필요한 폴더 생성
         try:
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             Path(self.docs_save_dir).mkdir(parents=True, exist_ok=True)
+            Path(self.output_dir).mkdir(parents=True, exist_ok=True)
         except Exception:
             # 권한 등의 문제로 폴더 생성 실패 시 예외 처리
             pass
@@ -78,6 +82,9 @@ class AppConfig:
         # HF 토큰(설정 UI 저장분 우선, 없으면 __init__의 환경변수 기본값 유지)
         if s.get("hf_token"):
             self.hf_token = s["hf_token"]
+        # 사용자 정의 출력 폴더 경로 오버라이드
+        if s.get("output_dir"):
+            self.output_dir = s["output_dir"]
 
     @staticmethod
     def whisper_dir_name(model_size: str) -> str:

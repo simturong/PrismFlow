@@ -33,7 +33,7 @@ class E2EHarness:
         original_execute = ClaudeCLIController.execute_command
         original_stream = ClaudeCLIController.execute_command_stream
         
-        def mock_execute_command(controller_self, prompt, session_id, model=None, timeout=30, system_prompt=None):
+        def mock_execute_command(controller_self, prompt, session_id, model=None, timeout=30, system_prompt=None, *args, **kwargs):
             if session_limit:
                 raise RuntimeError("Claude CLI execution failed: You've hit your session limit. Please try again after 1:10am.")
             
@@ -45,7 +45,7 @@ class E2EHarness:
             else:
                 return "This is a mocked response from Claude CLI."
                 
-        def mock_execute_command_stream(controller_self, prompt, session_id, model=None, system_prompt=None):
+        def mock_execute_command_stream(controller_self, prompt, session_id, model=None, system_prompt=None, *args, **kwargs):
             if session_limit:
                 raise RuntimeError("Claude CLI execution failed: You've hit your session limit. Please try again after 1:10am.")
             

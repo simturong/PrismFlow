@@ -159,6 +159,22 @@
 - [x] 11-C: CLI 디버그 로그 창(`core/cli_activity.py`, `ui_common/cli_log_window.py`) — 요청 즉시/응답 완료 분리 실시간 표시
 - [x] 11-D/E: 회의 Q&A에 도구 통합(웹검색+작업폴더 파일도구, 📁 폴더 지정), 창 이름 명기(PrismFlow Agent/Chat Agent), 흐름도 ~90%·상태 한 줄, 세션 'already in use' 수정(`_created_sessions`)
 - [x] 11-F: i2t 화면 용어집 STT 교정(`core/glossary.py`+`screen_glossary`), 회의종료 프리즈 수정(bounded stop+drain), 앱종료 즉시화(`terminate_all`), 폰트 경고 필터
-- [x] 11-공개: MIT LICENSE + README(한/영) + GitHub `simturong/PrismFlow` 전체 공개(.venv 히스토리 purge 후 push). 전체 85 passed/1 skipped·3회 연속 무결
+- [x] 11-공개: MIT LICENSE + README(한/영) + GitHub `simturong/PrismFlow` 전체 공개. 전체 85 passed/1 skipped·3회 연속 무결
 
+## Phase 12: 프로젝트 구조 최적화 및 불필요 문서 정리
+- [x] 12-1: 불필요한 Handoff 문서 및 `artifacts/` 폴더, `phase9_benchmark_report.md` 일괄 영구 삭제
+- [x] 12-2: `.agents/AGENTS.md` 파일/폴더 삭제, 루트 `agent.md`로 통합 및 `.agents/` 생성 차단 지침 주입
+- [x] 12-3: PyTest 회귀 테스트 검증 및 트리 개편 무결성 검증
+
+## Phase 13: 세션별 출력 폴더 구조화, UI 하드닝 및 회의 제어 기능 보강
+- [x] 13-1: `AppConfig` 및 DB `settings` 테이블에 `output_dir` 추가 및 로딩 오버라이드 구현
+- [x] 13-2: `SettingsDialog` UI에 출력 폴더 경로 표시창(QLineEdit) 및 폴더 브라우저(QPushButton) 추가
+- [x] 13-3: 세션 시작 시 `output_dir/{session_id}/` 단일 폴더 생성 및 3대 파일(WAV, TXT, MD) 저장 경로 리팩토링
+- [x] 13-4: 오버레이 창 테두리(`overlay.py` QPainter 보더 30alpha) 추가
+- [x] 13-5: 실시간 임시(Interim) 전사 피드 배선 및 자막 뷰 높이 2배 확대(85px)
+- [x] 13-6: 회의 일시중지(Pause)/재개(Resume) 및 정지(Stop) 버튼 추가, STT 엔진 대기/종료 연동 구현
+- [x] 13-7: Mermaid CLI 사용량 한도 초과 판정 키워드 축소(reset 매칭 제거) 및 세션 리밋 리셋 구현
+- [x] 13-8: Mermaid 화자(Speaker_XX) 표시 배제(프롬프트 및 로컬 폴백 룰 개편)
+- [x] 13-9: Mermaid 뷰 상단 핵심 요약 뉴스 자막바 연동
+- [x] 13-10: 단위/통합 테스트 코드 경로 매핑 수정 및 PyTest 무결성 검증
 

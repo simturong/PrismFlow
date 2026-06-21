@@ -47,8 +47,23 @@ class TranslucentOverlay(QWidget):
         # 사용자가 슬라이더로 직접 투명도를 조절하는 동안에는 hover 페이드를 일시 양보한다.
         self._user_opacity_active = False
 
+        # 싱글톤 컨텍스트 획득 및 신호 바인딩
+        from prismflow.core.context import MeetingContext
+        self.context = MeetingContext()
+
         # 우측 상단 창 조작 영역 초기화 (녹음 표시 + 투명도 슬라이더 + 최소/최대/닫기)
         self._init_control_buttons()
+
+        self.context.signals.meeting_started.connect(self._on_meeting_started)
+        self.context.signals.meeting_ended.connect(self._on_meeting_ended)
+        self.context.signals.meeting_paused.connect(self._on_meeting_paused)
+
+        if self.context.is_meeting_active:
+            self.btn_pause.setVisible(True)
+            self.btn_stop.setVisible(True)
+            if self.context.is_meeting_paused:
+                self.btn_pause.setText("\uE768") # Play
+                self.btn_pause.setToolTip("회의 재개")
 
     def _init_control_buttons(self):
         # 컨트롤(녹음 표시·슬라이더·버튼)을 한데 묶는 우측 상단 플로팅 위젯
@@ -76,6 +91,22 @@ class TranslucentOverlay(QWidget):
         self.opacity_slider.sliderPressed.connect(lambda: setattr(self, "_user_opacity_active", True))
         self.opacity_slider.sliderReleased.connect(self._on_opacity_slider_released)
 
+        # 일시중지 버튼 — \uE769 (Pause) / \uE768 (Play)
+        self.btn_pause = QPushButton(self.control_widget)
+        self.btn_pause.setFixedSize(28, 20)
+        self.btn_pause.setText("\uE769")
+        self.btn_pause.setToolTip("회의 일시중지")
+        self.btn_pause.clicked.connect(self._on_pause_clicked)
+        self.btn_pause.setVisible(False)
+
+        # 정지 버튼 — \uE71A (Stop)
+        self.btn_stop = QPushButton(self.control_widget)
+        self.btn_stop.setFixedSize(28, 20)
+        self.btn_stop.setText("\uE71A")
+        self.btn_stop.setToolTip("회의 정지(종료)")
+        self.btn_stop.clicked.connect(self._on_stop_clicked)
+        self.btn_stop.setVisible(False)
+
         # 최소화 버튼 — Segoe MDL2 Assets  (ChromeMinimize)
         self.btn_minimize = QPushButton(self.control_widget)
         self.btn_minimize.setFixedSize(28, 20)
@@ -98,11 +129,15 @@ class TranslucentOverlay(QWidget):
 
         # QSS 스타일 초기 적용 (윈도우 표준 플랫 스타일, 고대비 색상)
         self.btn_minimize.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+        self.btn_pause.setStyleSheet(self._button_style("#e2e8f0", "transparent", "rgba(255, 255, 255, 0.12)"))
+        self.btn_stop.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
         self.btn_close.setStyleSheet(self._button_style("#ff6b6b", "transparent", "#e81123"))
         self._update_maximize_button_style()
 
         layout.addWidget(self.recording_indicator)
         layout.addWidget(self.opacity_slider)
+        layout.addWidget(self.btn_pause)
+        layout.addWidget(self.btn_stop)
         layout.addWidget(self.btn_minimize)
         layout.addWidget(self.btn_maximize)
         layout.addWidget(self.btn_close)
@@ -213,7 +248,7 @@ class TranslucentOverlay(QWidget):
         self._reposition_controls()
 
     def paintEvent(self, event):
-        from PySide6.QtGui import QPainter, QColor
+        from PySide6.QtGui import QPainter, QColor, QPen
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         # 배경 채움은 '불투명'으로 둔다. 투명도는 전적으로 windowOpacity(투명도 슬라이더)가 제어하므로,
@@ -222,6 +257,12 @@ class TranslucentOverlay(QWidget):
         painter.setBrush(QColor(30, 30, 30, 255))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(self.rect(), 12, 12)
+
+        # 1px 두께의 은은한 반투명 화이트 테두리 추가
+        pen = QPen(QColor(255, 255, 255, 30), 1)
+        painter.setPen(pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 11, 11)
 
     def enterEvent(self, event):
         # 사용자가 슬라이더로 투명도를 조절 중이면 hover 페이드가 값을 덮어쓰지 않도록 양보한다.
@@ -233,6 +274,41 @@ class TranslucentOverlay(QWidget):
         if not self._user_opacity_active:
             self._animate_opacity(self.normal_opacity)
         super().leaveEvent(event)
+
+    def closeEvent(self, event):
+        try:
+            self.context.signals.meeting_started.disconnect(self._on_meeting_started)
+            self.context.signals.meeting_ended.disconnect(self._on_meeting_ended)
+            self.context.signals.meeting_paused.disconnect(self._on_meeting_paused)
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def _on_pause_clicked(self):
+        self.context.toggle_pause()
+
+    def _on_stop_clicked(self):
+        self.context.end_meeting()
+
+    def _on_meeting_started(self, session_id: str):
+        self.btn_pause.setVisible(True)
+        self.btn_stop.setVisible(True)
+        self.btn_pause.setText("\uE769") # Pause
+        self.btn_pause.setToolTip("회의 일시중지")
+        self._reposition_controls()
+
+    def _on_meeting_ended(self, session_id: str):
+        self.btn_pause.setVisible(False)
+        self.btn_stop.setVisible(False)
+        self._reposition_controls()
+
+    def _on_meeting_paused(self, paused: bool):
+        if paused:
+            self.btn_pause.setText("\uE768") # Play
+            self.btn_pause.setToolTip("회의 재개")
+        else:
+            self.btn_pause.setText("\uE769") # Pause
+            self.btn_pause.setToolTip("회의 일시중지")
 
     def _get_resize_edge(self, pos):
         margin = self.resize_margin

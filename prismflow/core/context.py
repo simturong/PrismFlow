@@ -10,6 +10,8 @@ class MeetingSignals(QObject):
     meeting_ended = Signal(str)         # session_id
     transcript_updated = Signal(dict)   # new transcript item
     flow_updated = Signal(str)          # new mermaid code
+    partial_transcript_updated = Signal(str, str) # speaker, text
+    meeting_paused = Signal(bool)       # is_paused
 
 class MeetingContext:
     _instance = None
@@ -31,7 +33,9 @@ class MeetingContext:
         
         # 상태 변수
         self._is_meeting_active = False
+        self._is_meeting_paused = False
         self._current_session_id = None
+        self._current_session_dir = None
         self._transcripts = []
         self._current_mermaid_code = ""
         self._last_screen_info = None
@@ -52,9 +56,19 @@ class MeetingContext:
             return self._is_meeting_active
 
     @property
+    def is_meeting_paused(self) -> bool:
+        with self._lock:
+            return self._is_meeting_paused
+
+    @property
     def current_session_id(self) -> str:
         with self._lock:
             return self._current_session_id
+
+    @property
+    def current_session_dir(self) -> Optional[str]:
+        with self._lock:
+            return self._current_session_dir
 
     @property
     def transcripts(self) -> list:
@@ -81,13 +95,44 @@ class MeetingContext:
         with self._lock:
             self._db_manager = manager
 
+    def set_paused(self, paused: bool) -> None:
+        """회의 일시중지 상태를 명시적으로 설정하고 시그널을 보냅니다."""
+        changed = False
+        with self._lock:
+            if self._is_meeting_active and self._is_meeting_paused != paused:
+                self._is_meeting_paused = paused
+                changed = True
+        if changed:
+            self._signals.meeting_paused.emit(paused)
+
+    def toggle_pause(self) -> bool:
+        """회의 일시중지 상태를 토글하고 시그널을 보냅니다. 변경된 상태(paused)를 반환합니다."""
+        paused = False
+        changed = False
+        with self._lock:
+            if self._is_meeting_active:
+                self._is_meeting_paused = not self._is_meeting_paused
+                paused = self._is_meeting_paused
+                changed = True
+        if changed:
+            self._signals.meeting_paused.emit(paused)
+        return paused
+
     def start_meeting(self, session_id: str, title: str = "새로운 회의") -> bool:
         start_time_iso = datetime.datetime.now().isoformat()
         with self._lock:
             if self._is_meeting_active:
                 return False
             self._is_meeting_active = True
+            self._is_meeting_paused = False
             self._current_session_id = session_id
+            
+            # output_dir/{session_id} 폴더 생성
+            from pathlib import Path
+            session_dir = Path(self._config.output_dir) / session_id
+            session_dir.mkdir(parents=True, exist_ok=True)
+            self._current_session_dir = str(session_dir)
+            
             self._transcripts.clear()
             self._current_mermaid_code = ""
             
@@ -107,6 +152,8 @@ class MeetingContext:
             self._is_meeting_active = False
             session_id = self._current_session_id
             self._current_session_id = None
+            # end_meeting 시에는 _current_session_dir를 유지하거나 None으로 리셋하되
+            # report_agent 등이 읽을 수 있도록 reset() 호출 전까지는 보존하거나, 필요하면 _current_session_dir를 유지
             
             # DB 저장
             if self._db_manager and session_id:
@@ -166,20 +213,18 @@ class MeetingContext:
                 # 실시간 정적 전사록 파일 (.txt) 추가 기록
                 try:
                     from pathlib import Path
-                    today = datetime.date.today().strftime("%Y-%m-%d")
-                    transcripts_dir = Path(self._config.docs_save_dir).parent / "Transcripts" / today
-                    transcripts_dir.mkdir(parents=True, exist_ok=True)
-                    txt_filepath = transcripts_dir / f"transcript_{self._current_session_id}.txt"
-                    
-                    # HH:MM:SS 포맷 타임코드 계산
-                    seconds = int(start_time)
-                    h = seconds // 3600
-                    m = (seconds % 3600) // 60
-                    s = seconds % 60
-                    time_str = f"{h:02d}:{m:02d}:{s:02d}"
-                    
-                    with open(txt_filepath, "a", encoding="utf-8") as f:
-                        f.write(f"[{time_str}] [{speaker}]: {text}\n")
+                    if self._current_session_dir:
+                        txt_filepath = Path(self._current_session_dir) / f"transcript_{self._current_session_id}.txt"
+                        
+                        # HH:MM:SS 포맷 타임코드 계산
+                        seconds = int(start_time)
+                        h = seconds // 3600
+                        m = (seconds % 3600) // 60
+                        s = seconds % 60
+                        time_str = f"{h:02d}:{m:02d}:{s:02d}"
+                        
+                        with open(txt_filepath, "a", encoding="utf-8") as f:
+                            f.write(f"[{time_str}] [{speaker}]: {text}\n")
                 except Exception as e:
                     # 파일 쓰기 예외가 전체 전사 흐름을 방해하지 않도록 격리
                     import logging
@@ -226,7 +271,9 @@ class MeetingContext:
         """MeetingContext의 모든 내부 상태를 강제 초기화합니다."""
         with self._lock:
             self._is_meeting_active = False
+            self._is_meeting_paused = False
             self._current_session_id = None
+            self._current_session_dir = None
             self._transcripts.clear()
             self._current_mermaid_code = ""
             self._last_screen_info = None

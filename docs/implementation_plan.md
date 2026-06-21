@@ -2,7 +2,7 @@
 
 > 본 문서(`docs/implementation_plan.md`)는 PrismFlow 프로젝트 계획의 **유일한 정본(Single Source of Truth)** 입니다.
 > 별도의 미러나 복제본을 두지 않으며, 모든 Phase 설계 변경은 이 문서에 직접 점진적으로 반영합니다.
-> (`docs/task.md` 역시 진행률 상태판의 유일한 정본이며, `artifacts/`는 세션 handoff 문서 전용입니다.)
+> (`docs/task.md` 역시 진행률 상태판의 유일한 정본입니다. 이 프로젝트에서는 handoff 문서를 작성하지 않으며, artifacts/ 폴더는 임시 관리 폴더이나 수시로 정리됩니다.)
 
 ---
 
@@ -40,6 +40,7 @@
      * [8-1. pyannote 토큰리스 오프라인 로컬 로드 설계 상세](#8-1-pyannote-토큰리스-오프라인-로컬-로드-설계-상세)
      * [8-2. Portable Python 격리 패키지 구조 설계 상세](#8-2-portable-python-격리-패키지-구조-설계-상세)
      * [8-3. Inno Setup 인스톨러 빌드 상세](#8-3-inno-setup-인스톨러-빌드-상세)
+9. [9. 상세 구현 설계서: Phase 12 (프로젝트 구조 최적화 및 불필요 문서 정리)](#9-상세-구현-설계서-phase-12-프로젝트-구조-최적화-및-불필요-문서-정리)
 
 ---
 
@@ -947,6 +948,114 @@ endlocal
 *   **회의종료 프리즈 수정**: `FlowAgent.stop(wait_ms)` 바운드 대기 + 코디네이터 백그라운드 배수(drain). **앱 종료 즉시화**: `cli_controller.terminate_all()`로 in-flight 서브프로세스 사살.
 *   **폰트 경고 필터**(`main._install_qt_message_filter`).
 *   **공개**: MIT LICENSE + README(한/영) + GitHub `simturong/PrismFlow` 전체 공개. (조기 커밋된 `.venv` 히스토리는 `git filter-branch`로 제거 후 푸시.)
+
+
+---
+
+## 10. 상세 구현 설계서: Phase 12 (프로젝트 구조 최적화 및 불필요 문서 정리)
+
+### 12-1. 불필요한 Handoff 문서 및 레거시 폴더/파일 일괄 영구 삭제
+*   **목적**: 프로젝트 내 불필요하거나 중복되는 인계(Handoff) 파일 및 임시 폴더를 일괄 정리하여 소스 트리 및 프로젝트 제어권을 확보합니다.
+*   **대상 파일 및 폴더**:
+    *   `docs/` 디렉토리 내: `handoff_2026-06-21_phase10.md`, `handoff_2026-06-21_phase11.md`, `phase9_benchmark_report.md` (중복 보고서)
+    *   `artifacts/` 폴더 전체 (인계 전용 레거시 폴더)
+*   **처리 방식**: 모든 대상 파일과 폴더를 영구 삭제하여 소스 트리를 완전히 정제합니다.
+
+### 12-2. AI 에이전트 Handoff 문서 생성 차단 및 커스텀 룰 단일 파일 통합
+*   **배경**: AI 에이전트(Antigravity 등)가 세션 정리 스킬(`Handoff`)을 통해 인계 문서 생성을 자동 시도하지 못하도록 제한하고, 분산되어 있던 프로젝트 수칙을 루트의 `agent.md`로 일원화합니다.
+*   **수칙 반영 및 구조 단일화**:
+    *   기존 `.agents/AGENTS.md` 파일과 `.agents/` 디렉토리를 완전히 영구 삭제합니다.
+    *   기존 `.agents/AGENTS.md`에 있던 구현계획서 협의/상세화 의무 및 작업 상태판 관리 규칙 등의 프로젝트 커스텀 룰을 루트의 `agent.md`에 유실 없이 병합하여 통합 관리합니다.
+    *   에이전트가 향후 세션 전환이나 마감 시 `Handoff` 스킬 등을 통해 인계 파일(`handoff_*.md`)을 생성하거나 관리하지 않도록 `agent.md`에 명시하고, 또한 임의로 `.agents/` 폴더나 `AGENTS.md`를 생성하는 것을 전면 금지하는 강력한 가이드를 주입합니다.
+    *   에이전트는 오직 `docs/implementation_plan.md`, `docs/task.md`, `docs/history.md` 및 루트의 `agent.md`만을 단계별 정본 및 지침서로 활용합니다.
+
+### 12-3. 검증 계획
+*   **구조 정리 검증**: 대상 Handoff 파일들과 `.agents/` 디렉토리가 모두 완전하게 삭제되었으며 `artifacts/` 폴더가 비어 있고, 루트의 `agent.md`에 규칙이 안전하게 통합되었는지 확인합니다.
+*   **회귀 테스트 검증**: 정리 작업 도중 기존 소스 코드에 부작용이 없음을 검증하기 위해 PyTest 회귀 테스트를 실행합니다.
+    *   검증 명령어: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q`
+
+
+---
+
+## 11. 상세 구현 설계서: Phase 13 (세션별 출력 폴더 구조화, UI 하드닝 및 회의 제어 기능 보강)
+
+### 13-1. 세션별 단일 폴더 출력 구조화
+*   **배경 및 문제점**:
+    *   기존에는 녹음 파일(`Recordings/`), 전사 파일(`Transcripts/`), 최종 회의록(`Reports/`)이 서로 다른 하위 디렉토리에 분산 저장되어, 단일 회의 세션의 결과물들을 하나의 폴더에서 직관적으로 관리하기 어려웠습니다.
+*   **구조 최적화**:
+    *   설정된 출력 폴더(`output_dir`) 하위에 회의 시작 시 고유한 세션 ID 폴더(`output_dir/{session_id}/`)를 동적 생성합니다.
+    *   **단일 세션 내 3대 파일 구성**:
+        1.  실시간 녹음 파일: `output_dir/{session_id}/meeting_{session_id}.wav`
+        2.  실시간 전사록 파일: `output_dir/{session_id}/transcript_{session_id}.txt`
+        3.  최종 회의록 리포트: `output_dir/{session_id}/report_{session_id}.md`
+    *   이로 인해 하나의 회의에 대한 모든 원본 및 산출물 파일이 하나의 폴더에 모이도록 개편합니다.
+
+### 13-2. AppConfig 및 SQLite settings 배선
+*   **환경 설정 키 추가**:
+    *   `AppConfig`에 `output_dir` (기본값: 프로젝트 폴더 내 `output/`) 변수를 추가합니다.
+    *   SQLite `settings` 테이블의 `output_dir` 키가 존재할 경우, 기동 시 이 값으로 `AppConfig.output_dir`을 동적 오버라이드합니다.
+*   **세션 폴더 생성 자동화**:
+    *   `MeetingContext`에서 세션 시작(`start_session`) 시 `output_dir/{session_id}/` 경로를 `os.makedirs(..., exist_ok=True)`를 통해 미리 안전하게 확보하고 다른 에이전트가 이 경로를 읽어 파일을 적재하도록 리팩토링합니다.
+
+### 13-3. SettingsDialog UI 출력 경로 브라우저 추가
+*   **UI 구성**:
+    *   트레이 우클릭 "설정" 클릭 시 호출되는 `SettingsDialog` 하단에 **출력 폴더 설정 레이아웃**을 신설합니다.
+    *   **QLineEdit**: 현재 설정된 `output_dir` 절대 경로를 표시 (읽기 전용 또는 직접 입력).
+    *   **QPushButton (찾기)**: `QFileDialog.getExistingDirectory()`를 연동하여 사용자가 GUI를 통해 원하는 출력 루트 디렉토리를 지정할 수 있도록 돕습니다.
+*   **설정 저장 및 즉시 반영**:
+    *   "저장" 버튼 클릭 시, 선택된 새 경로를 DB `settings` 테이블에 `output_dir` 키로 영구 저장하고 `AppConfig`에 즉시 동적 반영합니다.
+
+### 13-4. 오버레이 창 테두리(Border) 렌더링 추가
+*   **디자인 요구사항**:
+    *   현재 `TranslucentOverlay` 창의 경계 구분이 다소 불명확하여, 기존 프로그램(Chat UI 요소)과 정합되는 깔끔한 은은한 테두리를 추가합니다.
+*   **구현 설계**:
+    *   `prismflow/ui_common/overlay.py`의 `paintEvent`를 수정하여 `QPainter`를 기동할 때 외곽 테두리를 함께 그리도록 설계합니다.
+    *   테두리 스타일: 굵기 `1px`, 색상 `QColor(255, 255, 255, 30)` (약 12% 투명도의 은은한 화이트). `paintEvent` 렌더링 시 테두리가 프레임 바깥으로 미세하게 잘려 나가지 않도록 `self.rect().adjusted(1, 1, -1, -1)` 영역에 둥근 모서리 사각형(`drawRoundedRect`)을 적용합니다.
+
+### 13-5. 실시간 전사(Interim) 수신 및 자막창 높이 2배 확대
+*   **전사 기록창 확대**:
+    *   `flow_ui.py` 내의 `self.transcript_view` (QTextBrowser) 최대 높이를 기존 `40px`에서 `85px` (약 2.1배)로 확대하여 시인성을 높이고 줄바꿈된 발화록을 안정적으로 볼 수 있게 합니다.
+*   **실시간 전사(Interim) 피드 배선**:
+    *   `MeetingContext`에 임시/중간 전사 시그널 `partial_transcript_updated = Signal(str, str)` (speaker, text)를 신설합니다.
+    *   `stt_agent.py` (`RealTimeEngineWorker`)의 `_run_vad_segmented_loop` 내에서 발화 진행 중(`in_speech == True`)일 때, 약 0.5초 분량(예: `0.5 * sr` 샘플)의 오디오 청크가 누적될 때마다 백그라운드 스레드에서 가볍게 Whisper 전사(`_process_interim_inference(audio)`)를 단독 수행하여 중간 텍스트를 실시간으로 추출하고 이를 신설된 시그널로 방출합니다. (임시 텍스트이므로 DB나 context의 확정 리스트에는 저장하지 않습니다.)
+    *   `FlowUI`는 이 중간 전사 신호를 구독하여 하단 전사 뷰에 실시간으로 작성 중인 문구(예: `[말하는 중...] {텍스트}`)를 표출하고, 최종 VAD endpoint 감지로 발화가 확정되면 이 임시 자막을 지우고 확정된 줄(`add_transcript`)로 교체합니다.
+
+### 13-6. 회의 일시중지(중지) 및 정지(종료) 기능 연동
+*   **회의 제어 상태 추가**:
+    *   `MeetingContext`에 `is_meeting_paused` 상태 변수와 `meeting_paused = Signal(bool)` 시그널을 추가합니다.
+*   **오버레이 UI 일시중지 및 정지 버튼 신설**:
+    *   `FlowUI` 및 `ChatUI` 우상단 컨트롤 바(최소화 버튼 바로 왼쪽)에 **회의 일시중지/재개 토글 버튼(`||` / `▶` 기호)**과 **회의 정지(종료) 버튼(`■` 기호)**을 신설합니다.
+    *   **일시중지 버튼**: 클릭 시 `MeetingContext.toggle_pause()`가 실행되어 제어 상태가 동기화되며, 버튼의 외관이 `||` (중지) 또는 `▶` (재개)로 동적 토글됩니다. 또한 `status_hub`를 통해 `"stt"` 상태를 `OK(회의중)` / `IDLE(일시중지됨)`로 연동 표출합니다.
+    *   **정지 버튼**: 클릭 시 현재 진행 중인 회의 세션을 최종 종료하고 보고서 생성을 즉시 트리거하는 `AppCoordinator`의 `stop_meeting()` 흐름(또는 트레이 메뉴의 회의 종료와 동일한 핸들러)을 호출합니다. 이로써 사용자가 시스템 트레이를 거치지 않고도 오버레이 상에서 직관적으로 회의를 닫고 최종 마크다운 리포트를 띄울 수 있습니다.
+    *   회의가 일시중지 상태인 경우, `stt_agent.py`의 실시간 오디오 루프는 유입되는 마이크 오디오 청크를 폐기하고 추론 및 파일 기록 동작을 일시 대기합니다.
+    *   트레이 메뉴(`tray.py`)에도 "회의 일시중지" / "회의 재개" 메뉴를 추가하여 연동합니다.
+
+### 13-7. Mermaid 한도 초과 판정 버그 해결 및 화자(Speaker) 표시 배제
+*   **CLI 사용량 한도 초과(Session Limited) 판정 오판 해결**:
+    *   **원인**: 기존에는 에러 메시지에 `"reset"`이 들어가면 `_session_limited = True`로 오판하는 로직이 있어, 네트워크 상태로 인한 단순 `connection reset` 발생 시에도 사용량 한도 초과 상태로 간주되어 로컬 대체 모드로 고착되었습니다.
+    *   **해결책**:
+        1. `cli_controller.py` 내의 세션 리밋 판정 키워드를 `"session limit"`, `"rate limit"` 등으로 엄격하게 좁혀 단순 네트워크 `reset`으로 인한 오판을 방어합니다.
+        2. 회의 시작(`start_session` 및 코디네이터의 `_on_meeting_started`) 시 `self.cli_controller.set_session_limited(False)`를 명시적으로 호출해 세션 리밋 상태를 완벽히 매번 초기화합니다.
+*   **다이어그램 화자 표시 배제**:
+    *   `flow_agent.py` 내 프롬프트에서 *"화자 정보를 노드 텍스트에 간략히 표기해 주세요 (Speaker_XX)"*라는 규칙을 완전히 제거하고, *"화자 식별자(Speaker_XX)는 노드 및 다이어그램에 포함하지 말고, 오직 논의 흐름과 핵심 키워드로만 노드를 기술하세요"*로 튜닝합니다.
+    *   로컬 대체 모드(`_fallback_generate_mermaid`)에서도 `Speaker_00` 등 화자 자체를 노드로 생성하는 대신, 최근 전사 텍스트의 요약 문장을 바로 노드로 변환하고 화자 정보는 펜으로 연결하지 않도록 룰베이스 생성 구조를 개편합니다.
+
+### 13-8. Mermaid 뷰 상단 실시간 대화 핵심 뉴스 자막 표출
+*   **실시간 요약 헤드라인(News Ticker) 신설**:
+    *   `FlowUI`의 Mermaid 차트 영역 바로 위(상단)에 **현재 진행 대화 요약 레이블(News Headline Label)**을 가로로 신설합니다.
+*   **헤드라인 생성 루프**:
+    *   `flow_agent.py`가 30초 분석 루프를 돌릴 때, Mermaid 코드 외에 추가로 **"현재 30초 대화의 핵심 요약 한 줄(뉴스 자막용)"**도 함께 획득하도록 Haiku 프롬프트를 튜닝합니다. (출력 양식: `요약 한 줄`과 `Mermaid 코드`를 `===` 구분자로 획득).
+    *   획득한 핵심 요약 문장을 시그널을 통해 `FlowUI` 상단 헤드라인 레이블에 뉴스 자막 형태로 연동 표출합니다.
+
+### 13-9. 검증 계획
+*   **단위/통합 테스트 리팩토링**:
+    *   기존 `tests/test_stt.py`, `tests/test_report.py`, `tests/test_ui.py`에서 개별 경로를 참조하던 검증 로직을 `output_dir/{session_id}` 단일 경로 기준으로 매핑 및 수정합니다.
+    *   일시중지 상태에서 오디오 추론이 동작하지 않는지 테스트 케이스를 구축합니다.
+*   **회귀 테스트 검증**:
+    *   검증 명령어: `.venv\Scripts\python.exe -m pytest tests/ -p no:cacheprovider -q`
+
+
+
 
 
 

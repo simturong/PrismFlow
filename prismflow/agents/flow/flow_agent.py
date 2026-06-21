@@ -9,18 +9,25 @@ from prismflow.core.cli_controller import ClaudeCLIController
 
 logger = logging.getLogger(__name__)
 
-# claude CLI를 코딩 에이전트가 아닌 "Mermaid 흐름도 생성 엔진"으로 동작시키기 위한 시스템 프롬프트.
+# claude CLI를 코딩 에이전트가 아닌 "Mermaid 흐름도 및 뉴스 요약 생성 엔진"으로 동작시키기 위한 시스템 프롬프트.
 FLOW_SYSTEM_PROMPT = (
-    "당신은 회의 발화를 분석해 Mermaid.js 흐름도를 생성하는 시각화 엔진입니다. "
-    "반드시 유효한 Mermaid flowchart 코드만 출력하십시오. 인사·설명·메타 문구 없이 "
-    "'graph TD' 또는 'flowchart TD'로 시작하는 코드만 반환하고, 도구·파일 작업을 하지 마십시오."
+    "당신은 회의 발화를 분석해 Mermaid.js 흐름도와 실시간 뉴스 한 줄 요약을 생성하는 시각화 엔진입니다. "
+    "출력 형식은 반드시 다음과 같이 맨 위에 1줄 핵심 요약, 그 뒤에 '===' 구분자, 그리고 순수한 Mermaid flowchart 코드를 작성하십시오.\n"
+    "양식 예시:\n"
+    "이번 회의에서 A 의제를 승인하고 담당자를 지정함\n"
+    "===\n"
+    "graph TD\n"
+    "  A[의제 승인] --> B[담당자 지정]\n"
+    "인사·설명·메타 문구는 절대 반환하지 말고, 마크다운 코드 펜스(```)도 사용하지 마십시오. 오직 위의 양식만 그대로 준수하십시오."
 )
 
 class FlowAgent(QThread):
-    """30초 주기로 회의 발화를 분석하여 Mermaid.js 흐름도를 갱신하는 백그라운드 에이전트 QThread."""
+    """30초 주기로 회의 발화를 분석하여 Mermaid.js 흐름도와 뉴스 요약을 갱신하는 백그라운드 에이전트 QThread."""
     
     # 갱신 완료 신호: 새롭게 파싱된 Mermaid 코드
     diagram_updated = Signal(str)
+    # 신규 핵심 요약 신호 (뉴스 자막용)
+    summary_updated = Signal(str)
     # 상태 가시화 신호 (Phase 10): 분석(CLI 호출) 시작 / 실패
     analysis_started = Signal()
     analysis_failed = Signal(str)
@@ -158,11 +165,15 @@ class FlowAgent(QThread):
 {prev_mermaid}
 
 [중요 작성 규칙]
-1. 반드시 마크다운 코드 펜스(```mermaid 등)나 안내 문구를 모두 배제하고, graph TD 또는 flowchart TD로 시작하는 순수한 Mermaid flowchart 코드만 출력하세요.
-2. [기존 Mermaid 코드]의 노드 ID(예: A, B, C 등)와 구조를 최대한 재사용(Upsert)하여 기존 흐름을 유지하세요. 새로 논의된 소주제 사항만 기존 흐름 아래에 새 노드로 연결하여 덧붙여 나가세요.
-3. 대주제나 논의 단계가 바뀌면 subgraph로 그룹화하여 나타내세요.
-4. 단순 인사말, 잡담, 중복 추임새는 노드에 추가하지 말고 노이즈로 필터링하세요.
-5. 화자 정보(예: Speaker_00)를 노드 텍스트에 간략히 표기해 주세요 (예: "아이디어 제안 (Speaker_00)").
+1. 출력 형식은 반드시 다음과 같이 구성하세요:
+<현재 논의 중인 대화 전체의 핵심 요약 1문장 (뉴스 자막용, 공백 포함 30자 내외)>
+===
+<graph TD 또는 flowchart TD로 시작하는 순수한 Mermaid flowchart 코드>
+2. 반드시 마크다운 코드 펜스(```mermaid 등)나 안내 문구를 모두 배제하고 위의 양식대로만 출력하세요.
+3. [기존 Mermaid 코드]의 노드 ID(예: A, B, C 등)와 구조를 최대한 재사용(Upsert)하여 기존 흐름을 유지하세요. 새로 논의된 소주제 사항만 기존 흐름 아래에 새 노드로 연결하여 덧붙여 나가세요.
+4. 대주제나 논의 단계가 바뀌면 subgraph로 그룹화하여 나타내세요.
+5. 단순 인사말, 잡담, 중복 추임새는 노드에 추가하지 말고 노이즈로 필터링하세요.
+6. 화자 식별자(Speaker_00, Speaker_01 등)는 노드 및 다이어그램에 절대 포함하지 마십시오. 오직 논의 흐름과 핵심 내용만으로 노드를 구성해야 합니다.
 """
         # 4. 세션 리밋 상태이면 즉각 로컬 대체(Fallback) 모드 구동
         if self.cli_controller.is_session_limited():
@@ -170,6 +181,10 @@ class FlowAgent(QThread):
             fallback_code = self._fallback_generate_mermaid(transcripts)
             self.context.update_mermaid_code(fallback_code)
             self.diagram_updated.emit(fallback_code)
+            fallback_summary = "대체 모드: 대화 기록을 기반으로 타임라인을 표시합니다."
+            if transcripts:
+                fallback_summary = f"최근 논의: {transcripts[-1]['text'][:30]}..."
+            self.summary_updated.emit(fallback_summary)
             return
 
         try:
@@ -183,11 +198,19 @@ class FlowAgent(QThread):
             )
             
             # 5. 결과 파싱 및 검증
-            parsed_code = self._clean_mermaid_code(response)
+            summary = "현재 대화가 진행 중입니다..."
+            mermaid_part = response
+            if "===" in response:
+                parts = response.split("===", 1)
+                summary = parts[0].strip()
+                mermaid_part = parts[1].strip()
+
+            parsed_code = self._clean_mermaid_code(mermaid_part)
             if parsed_code and ("graph " in parsed_code or "flowchart " in parsed_code):
-                logger.info("Successfully updated Mermaid diagram code.")
+                logger.info("Successfully updated Mermaid diagram code and summary.")
                 self.context.update_mermaid_code(parsed_code)
                 self.diagram_updated.emit(parsed_code)
+                self.summary_updated.emit(summary)
                 self.last_analyzed_idx = max_idx
             else:
                 logger.warning(f"Claude returned invalid Mermaid code format: {response[:100]}...")
@@ -200,30 +223,32 @@ class FlowAgent(QThread):
             fallback_code = self._fallback_generate_mermaid(transcripts)
             self.context.update_mermaid_code(fallback_code)
             self.diagram_updated.emit(fallback_code)
+            fallback_summary = "대체 모드: 대화 기록을 기반으로 타임라인을 표시합니다."
+            if transcripts:
+                fallback_summary = f"최근 논의: {transcripts[-1]['text'][:30]}..."
+            self.summary_updated.emit(fallback_summary)
             self.last_analyzed_idx = max_idx
 
     def _fallback_generate_mermaid(self, transcripts: list) -> str:
         """클라우드 한도 초과 시 로컬 발화 관계 및 타임라인을 나타내는 룰베이스 Mermaid flowchart TD를 생성합니다."""
         code = "graph TD\n"
-        code += "    subgraph LocalFallback[⚠️ 로컬 대체 모드 - CLI 사용량 한도 초과]\n"
+        code += "    subgraph LocalFallback[⚠️ 로컬 대체 모드]\n"
         
-        # 화자 목록 수집
-        speakers = sorted(list(set([item["speaker"] for item in transcripts])))
-        for sp in speakers:
-            code += f"        {sp}[\"{sp} (발화군)\"]\n"
+        # 최근 10개 발화의 요약을 노드로 생성하고 순차 연결합니다. (화자 식별자 배제)
+        recent = transcripts[-10:]
+        node_ids = []
+        for i, item in enumerate(recent):
+            txt = item["text"].strip()
+            # 특수문자 제거 및 요약
+            txt_clean = re.sub(r'["\'\(\)\{\}\[\]]', '', txt)
+            txt_trunc = txt_clean[:20] + "..." if len(txt_clean) > 20 else txt_clean
+            node_id = f"Node{i}"
+            code += f"        {node_id}[\"{txt_trunc}\"]\n"
+            node_ids.append(node_id)
             
-        # 최근 12개 발화의 화자 간 전이관계 연결 (간단한 요약 텍스트 포함)
-        recent = transcripts[-12:]
-        for i in range(len(recent) - 1):
-            s1 = recent[i]["speaker"]
-            s2 = recent[i+1]["speaker"]
-            if s1 != s2:
-                txt = recent[i+1]["text"].strip()
-                # 불필요 특수문자 제거 및 15글자 축소
-                txt_clean = re.sub(r'["\'\(\)\{\}\[\]]', '', txt)
-                txt_trunc = txt_clean[:15] + "..." if len(txt_clean) > 15 else txt_clean
-                code += f"        {s1} -->|\"{txt_trunc}\"| {s2}\n"
-                
+        for i in range(len(node_ids) - 1):
+            code += f"        {node_ids[i]} --> {node_ids[i+1]}\n"
+            
         code += "    end"
         return code
 

@@ -34,23 +34,30 @@
 ```text
 E:\Tak\Gemini\PrismFlow\
 ├── agent.md                        # 본 파일 (프로젝트 내비게이션, 코딩 규칙 가이드)
-├── main.py                         # 앱 전체 진입점
+├── main.py                         # 앱 전체 진입점 (QApplication, 트레이 기동, 에이전트 조율)
 ├── run.bat                         # Windows 원클릭 실행 배치 스크립트
+├── requirements.txt                # 프로젝트 가상환경 패키지 의존성 목록
+├── build_release.py                # Portable Python 격리 패키지 빌드 자동화 스크립트
+├── setup.iss                       # Inno Setup 설치파일 빌드용 스크립트
+├── stt_live_test.py                # Whisper GPU/VAD 격리 실측용 라이브 테스트 스크립트
 │
-├── docs/                           # 산출물 보관 폴더
+├── docs/                           # 산출물 보관 폴더 (정본 SSOT 보관처)
 │   ├── implementation_plan.md      # [규칙 0] 각 Phase 착수 전 작성·승인받는 상세 구현 계획서(SSOT)
 │   ├── task.md                     # 각 Phase 작업 완료 후 업데이트하는 전체 진행률 및 Task 상태판
-│   └── history.md                  # [신설] 각 Phase 완료 시 작성하는 개발 시행착오 및 히스토리 위키
+│   └── history.md                  # 각 Phase 완료 시 작성하는 개발 시행착오 및 히스토리 위키
 │
 ├── tests/                          # ReAct 검증용 단위/통합 테스트 코드 디렉토리
 │   ├── __init__.py
 │   ├── conftest.py                 # PyTest 공통 피스처 및 DB/CLI 모크 설정
-│   ├── test_db.py                  # SQLite CRUD 비즈니스 로직 테스트
-│   ├── test_cli.py                 # Claude CLI 파이프 비차단 IO 테스트
-│   ├── test_stt.py                 # VAD 및 STT 에뮬레이터 테스트
-│   ├── test_flow.py                # Mermaid 코드 생성 및 흐름도 갱신 테스트
-│   ├── test_chat.py                # Chat RAG 프롬프트 병합 및 응답 테스트
-│   └── test_report.py              # 최종 회의록 생성·파일 I/O·DB summary·자동 실행 테스트
+│   ├── test_core.py                # config / context 싱글톤 및 CLI 오버라이드 검증
+│   ├── test_db.py                  # SQLite CRUD 및 세션 로딩 테스트
+│   ├── test_cli.py                 # Claude CLI 파이프 비차단 IO 및 에러 핸들링 검증
+│   ├── test_stt.py                 # STT 스레드 및 VAD 분절, 실엔진 격리 테스트
+│   ├── test_flow.py                # Mermaid 코드 생성, 노드 재사용(Upsert) 유효성 검사
+│   ├── test_chat.py                # RAG 프롬프트 병합 및 응답 스트리밍 검증
+│   ├── test_report.py              # 최종 회의록 Markdown 생성 및 자동 실행 테스트
+│   ├── test_ui.py                  # SettingsDialog 저장/로드 UI 테스트
+│   └── test_benchmark.py           # 최적화 50% 성능 목표 회귀 방지 벤치마크 테스트
 │
 └── prismflow/                      # 메인 패키지 루트
     ├── __init__.py
@@ -60,35 +67,47 @@ E:\Tak\Gemini\PrismFlow\
     │   ├── config.py               # 전역 환경설정
     │   ├── context.py              # Thread-safe 데이터 버스 (싱글톤)
     │   ├── db.py                   # SQLite DB 연동 및 테이블 스키마/CRUD
-    │   └── cli_controller.py       # 로컬 Claude CLI 통신 컨트롤러 (비차단 큐)
+    │   ├── cli_controller.py       # 로컬 Claude CLI 통신 컨트롤러 (비차단 큐)
+    │   ├── agent_status.py         # 5대 에이전트 상태(IDLE/OK/WORKING/ERROR) 집계/배포 허브
+    │   ├── cli_activity.py         # Claude CLI 요청/응답 디버그 로그 추적 허브
+    │   ├── screen_detector.py      # [i2t 화면감지] PPT 슬라이드 COM 및 범용 MSE 화면 전환 감지
+    │   └── glossary.py             # [i2t 용어집교정] 화면 추출 키워드 기반 STT 오인식 교정
     │
     ├── ui_common/                  # UI 공통 레이아웃/리소스
     │   ├── __init__.py
     │   ├── tray.py                 # 시스템 트레이 메뉴 관리
-    │   └── overlay.py              # 드래그/반투명 애니메이션 오버레이 베이스 클래스
+    │   ├── overlay.py              # 드래그/반투명 애니메이션 오버레이 베이스 클래스
+    │   ├── settings_ui.py          # 설정 다이얼로그 (Mock 토글, HF 토큰, 가속, 모델 크기)
+    │   ├── status_panel.py         # 5대 에이전트 상태 및 교정 DB 현황 실시간 패널
+    │   ├── indicators.py           # 녹음 중 빨간 점멸 인디케이터 (오버레이 통합)
+    │   └── cli_log_window.py       # CLI 요청/응답 디버그 로그 실시간 표출 창
+    │
+    ├── resources/                  # 로컬 가중치 모델 등 오프라인 리소스
+    │   └── models/
+    │       └── whisper-small-int8-ov/  # 로컬 오프라인 실행용 OpenVINO Whisper 번들 모델
     │
     └── agents/                     # [수직 슬라이스 격리 구조 - 토큰 최적화용 에이전트 목록]
         ├── stt/                    # ① STT & 오디오 에러 제어 에이전트
         │   ├── __init__.py
-        │   ├── stt_agent.py        # STT 비동기 스레드 (Mock 기능 포함)
+        │   ├── stt_agent.py        # STT 비동기 스레드 (OpenVINO Whisper + pyannote)
         │   └── audio.py            # 마이크/루프백 오디오 캡처 유틸
         │
         ├── flow/                   # ② Flow 시각화 에이전트
         │   ├── __init__.py
-        │   ├── flow_agent.py       # 30초 주기 다이어그램 생성 스레드
-        │   ├── flow_ui.py          # QWebEngineView 기반 투명 오버레이 윈도우
+        │   ├── flow_agent.py       # 3-way 동적 트리거 Mermaid 다이어그램 생성 스레드
+        │   ├── flow_ui.py          # QWebEngineView 기반 반투명 흐름도 오버레이 윈도우
         │   ├── mermaid_html.py     # 로컬 HTML/CSS 템플릿
         │   └── resources/
         │       └── mermaid.min.js  # 로컬 오프라인용 라이브러리
         │
         ├── chat/                   # ③ Chat 어시스턴트 에이전트
         │   ├── __init__.py
-        │   ├── chat_agent.py       # RAG 프롬프트 병합 및 Q&A 스레드
+        │   ├── chat_agent.py       # RAG 프롬프트 병합 및 Q&A 스레드 (One-shot)
         │   └── chat_ui.py          # 질문 입력 및 대화 히스토리 표출 윈도우
         │
         └── report/                 # ④ Report 최종 회의록 보고서 에이전트
             ├── __init__.py
-            └── report_agent.py     # 회의 종료 시 Opus 4.8 회의록 컴파일 및 마크다운 파일 출력 스레드 (ReportAgent + ReportWorker)
+            └── report_agent.py     # 회의 종료 시 Opus 4.8 회의록 컴파일 및 마크다운 파일 출력 스레드
 ```
 
 ---
@@ -134,7 +153,12 @@ E:\Tak\Gemini\PrismFlow\
    - 구현 계획서를 업데이트할 때 **전체 마일스톤이나 타 Phase 계획을 덮어써서 삭제하지 마십시오**.
    - 반드시 기존 계획 구조를 보존한 채로, 해당 Phase 영역에 세부 기술 설계 및 내용을 점진적으로 덧붙여야 합니다.
    - **Phase 내 계획 수정이 이루어질 경우, 이에 종속성이 있는 다른 구성요소(예: `task.md`, `tests/` 구성, 관련 API 매핑 등)도 반드시 식별하여 동시 업데이트를 보장해야 합니다.**
+   - **다이렉트 협의 의무**: 기획 및 설계 단계에서 사용자와 확정 논의를 거칠 때는 아티팩트 폴더에 임시 드래프트 계획서를 따로 작성하지 않고, 곧바로 프로젝트 내의 [docs/implementation_plan.md](file:///E:/Tak/Gemini/PrismFlow/docs/implementation_plan.md)를 직접 실시간으로 편집/수정해가며 사용자와 싱크를 조율합니다.
+   - **승인 요청 전 상세화 의무**: 사용자의 최종 승인(Proceed)을 구하기 위해 대기하기 전, 구현에 사용될 모든 세부 기술 설계 명세(비차단 입출력 버퍼링, COM API 연동, 30초 Debounce 캡처 로직 등)가 프로젝트 내 `docs/implementation_plan.md`에 파편화 없이 구체적이고 꼼꼼하게 기술 완료되어 있어야 합니다. 상세 사양이 생략된 뼈대 계획만으로 성급하게 승인을 요구하는 행위는 엄격히 금지됩니다.
 6. **문서 동기화 및 마감 엄격 규칙 (Document Sync & Closeout Rules)**:
    - **단일 정본(SSOT) 원칙**: `docs/task.md`와 `docs/implementation_plan.md`가 **유일한 정본**입니다. 별도의 복제본을 만들어 이중 관리하지 **마십시오**.
    - **역사서 선행 마감**: 임의의 개발 Phase를 '완료(✅ 완료 또는 [x])' 처리하여 최종 보고하기 직전, 반드시 [docs/history.md](file:///E:/Tak/Gemini/PrismFlow/docs/history.md)에 해당 Phase 동안의 상세 개발 내역, 시행착오(Trial & Error), 대안 비교, 블로커 극복 과정을 **선행 작성** 완료한 뒤 완료 선언을 해야 합니다. 역사서 작성 누락은 절대 허용되지 않습니다.
    - **계획 변경과 Task 동시 반영**: 구현 도중 설계 및 계획의 추가나 수정이 발생하면, 이에 연동되는 [docs/task.md](file:///E:/Tak/Gemini/PrismFlow/docs/task.md)의 세부 할 일 목록도 즉시 구조적으로 동기화하여 변경해야 합니다.
+   - **Handoff 문서 작성 금지**: AI 에이전트는 세션 전환이나 마감 시 `Handoff` 스킬 등을 통해 인계 파일(`handoff_*.md`)을 생성하거나 관리하지 않습니다. 이 지침은 글로벌 스킬의 자동화 로직보다 우선합니다. 진행 상황 및 역사 관리는 오직 `docs/` 내의 3대 문서로만 엄격히 통제합니다.
+   - **.agents/ 폴더 및 AGENTS.md 생성 금지**: 프로젝트 내에 커스텀 규칙 폴더(`.agents/`)나 `AGENTS.md` 파일을 임의로 생성하거나 작성하지 마십시오. 모든 커스텀 규칙과 프로젝트 운영 수칙은 오직 루트의 `agent.md` 단일 파일로만 통합 관리합니다.
+

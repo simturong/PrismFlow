@@ -97,18 +97,20 @@ def test_flow_ui_three_pane_layout(q_app):
         assert ui.web_view is not None
         assert ui.transcript_view is not None
         assert ui.status_panel is not None
+        assert ui.headline_label is not None
 
         # 흐름도(블록도)만 신축(stretch) 영역이라 세로 공간 대부분(~90%)을 흡수한다.
-        # 전사 스트립/상태 줄은 고정/캡 높이(stretch 0)로 최소화한다.
+        # 뉴스 자막/전사 스트립/상태 줄은 고정/캡 높이(stretch 0)로 최소화한다.
         lay = ui.layout()
-        assert lay.count() == 3
-        assert lay.stretch(0) == 1   # web_view(흐름도) — 유일한 신축 영역
-        assert lay.stretch(1) == 0   # 전사 스트립 (고정 캡)
-        assert lay.stretch(2) == 0   # 상태 한 줄 (고정)
+        assert lay.count() == 4
+        assert lay.stretch(0) == 0   # headline (고정)
+        assert lay.stretch(1) == 1   # web_view(흐름도) — 유일한 신축 영역
+        assert lay.stretch(2) == 0   # 전사 스트립 (고정 캡)
+        assert lay.stretch(3) == 0   # 상태 한 줄 (고정)
         # 상태 패널은 한 줄 최소 높이로 고정
         assert ui.status_panel.maximumHeight() <= 32
-        # 전사 스트립도 흐름도를 침범하지 않도록 낮게 제한
-        assert ui.transcript_view.maximumHeight() <= 48
+        # 전사 스트립도 흐름도를 침범하지 않도록 낮게 제한 (85px로 확대됨)
+        assert ui.transcript_view.maximumHeight() <= 85
     finally:
         ui.close()
 

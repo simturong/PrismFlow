@@ -32,6 +32,7 @@ class SystemTrayManager(QSystemTrayIcon):
         # 컨텍스트 신호 연결
         self.context.signals.meeting_started.connect(self._on_meeting_started)
         self.context.signals.meeting_ended.connect(self._on_meeting_ended)
+        self.context.signals.meeting_paused.connect(self._on_meeting_paused)
 
     def init_menu(self):
         self.menu = QMenu()
@@ -39,6 +40,11 @@ class SystemTrayManager(QSystemTrayIcon):
         self.start_action = QAction("회의 시작", self)
         self.start_action.triggered.connect(self.start_meeting)
         self.menu.addAction(self.start_action)
+        
+        self.pause_action = QAction("회의 일시중지", self)
+        self.pause_action.triggered.connect(self.toggle_pause)
+        self.pause_action.setEnabled(False)
+        self.menu.addAction(self.pause_action)
         
         self.end_action = QAction("회의 종료", self)
         self.end_action.triggered.connect(self.end_meeting)
@@ -113,6 +119,17 @@ class SystemTrayManager(QSystemTrayIcon):
         if success:
             self.showMessage("PrismFlow", f"회의가 시작되었습니다. (ID: {session_id})", QSystemTrayIcon.Information, 2000)
             
+    def toggle_pause(self):
+        self.context.toggle_pause()
+
+    def _update_pause_action(self, paused: bool):
+        if paused:
+            self.pause_action.setText("회의 재개")
+            self.showMessage("PrismFlow", "회의가 일시중지되었습니다.", QSystemTrayIcon.Information, 2000)
+        else:
+            self.pause_action.setText("회의 일시중지")
+            self.showMessage("PrismFlow", "회의가 재개되었습니다.", QSystemTrayIcon.Information, 2000)
+
     def end_meeting(self):
         success = self.context.end_meeting()
         if success:
@@ -133,9 +150,16 @@ class SystemTrayManager(QSystemTrayIcon):
     def _on_meeting_started(self, session_id: str):
         self.start_action.setEnabled(False)
         self.end_action.setEnabled(True)
+        self.pause_action.setEnabled(True)
+        self.pause_action.setText("회의 일시중지")
         self.setIcon(self.active_icon)
+
+    def _on_meeting_paused(self, paused: bool):
+        self._update_pause_action(paused)
 
     def _on_meeting_ended(self, session_id: str):
         self.start_action.setEnabled(True)
         self.end_action.setEnabled(False)
+        self.pause_action.setEnabled(False)
+        self.pause_action.setText("회의 일시중지")
         self.setIcon(self.default_icon)

@@ -115,6 +115,9 @@ class AppCoordinator:
     def _on_meeting_started(self, session_id: str):
         logger.info(f"Meeting session {session_id} started. Launching Phase 3 & 4 agents...")
 
+        # 회의 시작 시 세션 리밋 상태를 항상 False로 리셋
+        self.cli_controller.set_session_limited(False)
+
         # 녹음(회의 진행) 인디케이터 점멸 시작 — 두 반투명 오버레이 모두 좌상단 표시
         self.flow_ui.set_recording(True)
         self.chat_ui.set_recording(True)
@@ -142,6 +145,7 @@ class AppCoordinator:
         self.flow_agent = FlowAgent(self.context, self.cli_controller,
                                     check_interval_sec=15.0, burst_threshold=3, min_interval_sec=8.0)
         self.flow_agent.diagram_updated.connect(self.flow_ui.update_diagram)
+        self.flow_agent.summary_updated.connect(self.flow_ui.update_headline)
         self.flow_agent.analysis_started.connect(
             lambda: self.status_hub.set_status("flow", AgentState.WORKING, "생성중"))
         self.flow_agent.diagram_updated.connect(
@@ -287,7 +291,7 @@ class AppCoordinator:
         유지한 채 백그라운드로 배수(drain)한다. 또한 배수 중 늦게 도착하는 신호가 리셋된 UI를 건드리지
         않도록 에이전트의 출력 신호를 먼저 끊는다.
         """
-        for sig in (agent.diagram_updated, agent.analysis_started, agent.analysis_failed):
+        for sig in (agent.diagram_updated, agent.summary_updated, agent.analysis_started, agent.analysis_failed):
             try:
                 sig.disconnect()
             except (RuntimeError, TypeError):

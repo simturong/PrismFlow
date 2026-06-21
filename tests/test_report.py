@@ -160,8 +160,7 @@ def test_report_agent_triggered_by_meeting_ended(q_app, temp_config):
 
     assert len(generated) == 1
 
-    today = datetime.date.today().strftime("%Y-%m-%d")
-    expected = Path(temp_config.docs_save_dir) / today / "report_report_agent_wire.md"
+    expected = Path(temp_config.output_dir) / "report_agent_wire" / "report_report_agent_wire.md"
     assert expected.exists()
     assert expected.read_text(encoding="utf-8") == SAMPLE_REPORT
 

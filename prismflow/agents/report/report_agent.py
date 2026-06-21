@@ -93,13 +93,14 @@ class ReportWorker(QThread):
     error = Signal(str)              # 오류 메시지
 
     def __init__(self, cli_controller: ClaudeCLIController, db_manager, config: AppConfig,
-                 session_id: str, mermaid_code: str):
+                 session_id: str, mermaid_code: str, session_dir: Optional[str] = None):
         super().__init__()
         self.cli_controller = cli_controller
         self.db_manager = db_manager
         self.config = config
         self.session_id = session_id
         self.mermaid_code = mermaid_code
+        self.session_dir = session_dir
 
     def run(self):
         try:
@@ -126,7 +127,7 @@ class ReportWorker(QThread):
                     )
                 except Exception as e:
                     err_str = str(e)
-                    if "session limit" in err_str.lower() or "limit" in err_str.lower() or "reset" in err_str.lower():
+                    if self.cli_controller._looks_like_session_limit(err_str):
                         logger.warning("Detected session limit during report generation. Falling back to local report...")
                         self.cli_controller.set_session_limited(True)
                         report_content = self._fallback_generate_report(session, transcripts, chat_logs)
@@ -193,11 +194,14 @@ class ReportWorker(QThread):
 *PrismFlow Local Fallback Report Engine v1.0. Claude 사용량 한도 해제 이후(기본 1:10am 이후) 재기동하시면 Opus에 의한 인공지능 요약 및 분석 회의록을 생성할 수 있습니다.*"""
 
     def _save_report(self, content: str) -> Path:
-        """`docs_save_dir/YYYY-MM-DD/report_{session_id}.md` 경로에 UTF-8로 기록합니다."""
-        today = datetime.date.today().strftime("%Y-%m-%d")
-        report_dir = Path(self.config.docs_save_dir) / today
-        report_dir.mkdir(parents=True, exist_ok=True)
-        filepath = report_dir / f"report_{self.session_id}.md"
+        """세션 디렉토리가 있으면 `session_dir/report_{session_id}.md`로 저장하고, 없으면 `docs_save_dir/YYYY-MM-DD/` 경로에 UTF-8로 기록합니다."""
+        if self.session_dir:
+            filepath = Path(self.session_dir) / f"report_{self.session_id}.md"
+        else:
+            today = datetime.date.today().strftime("%Y-%m-%d")
+            report_dir = Path(self.config.docs_save_dir) / today
+            report_dir.mkdir(parents=True, exist_ok=True)
+            filepath = report_dir / f"report_{self.session_id}.md"
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(content)
         logger.info(f"Report saved to: {filepath}")
@@ -242,8 +246,9 @@ class ReportAgent(QObject):
         mermaid_code = self.context.current_mermaid_code
         db_manager = self.context.db_manager
         config = getattr(self.cli_controller, "config", None) or AppConfig.load_default()
+        session_dir = self.context.current_session_dir
 
-        worker = ReportWorker(self.cli_controller, db_manager, config, session_id, mermaid_code)
+        worker = ReportWorker(self.cli_controller, db_manager, config, session_id, mermaid_code, session_dir=session_dir)
         worker.report_generated.connect(self._on_report_generated)
         worker.error.connect(self._on_error)
         worker.finished.connect(lambda w=worker: self._cleanup_worker(w))

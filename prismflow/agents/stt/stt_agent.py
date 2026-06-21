@@ -53,6 +53,10 @@ class RealTimeEngineWorker(QThread):
         
         while self._running:
             if self.context.is_meeting_active:
+                if self.context.is_meeting_paused:
+                    time.sleep(0.1)
+                    continue
+
                 if not wav_initialized:
                     self._init_wav_file(self.context.current_session_id)
                     wav_initialized = True
@@ -76,7 +80,7 @@ class RealTimeEngineWorker(QThread):
                 # mock_interval 초 동안 대기하되 스레드 중단 요청에 빠르게 반응하도록 0.1초씩 끊어서 확인
                 sleep_steps = int(self.mock_interval / 0.1)
                 for _ in range(sleep_steps):
-                    if not self._running or not self.context.is_meeting_active:
+                    if not self._running or not self.context.is_meeting_active or self.context.is_meeting_paused:
                         break
                     time.sleep(0.1)
             else:
@@ -133,6 +137,16 @@ class RealTimeEngineWorker(QThread):
             self._close_wav_file()
             self.status_changed.emit("idle")
 
+    def _process_interim_inference(self, audio_window) -> str:
+        """임시 오디오 윈도우를 가볍게 전사하여 텍스트만 반환합니다."""
+        if self.whisper_model is not None:
+            try:
+                res = self.whisper_model.generate(audio_window, self._whisper_cfg)
+                return str(res).strip()
+            except Exception as e:
+                logger.debug(f"Interim Whisper inference error: {e}")
+        return ""
+
     def _run_vad_segmented_loop(self, audio_cap):
         """에너지 VAD 엔드포인팅으로 발화 단위를 분절하여 추론한다.
 
@@ -155,9 +169,10 @@ class RealTimeEngineWorker(QThread):
         speech_seen = False
         abs_samples = 0           # 전체 타임라인 클럭(샘플 단위)
         utt_start_sample = 0
+        interim_sample_count = 0  # 실시간 임시 전사용 샘플 카운터
 
         def finalize():
-            nonlocal utt, in_speech, silence_run, speech_seen, utt_start_sample
+            nonlocal utt, in_speech, silence_run, speech_seen, utt_start_sample, interim_sample_count
             if speech_seen and utt:
                 audio = np.concatenate(utt).astype(np.float32)
                 if len(audio) >= min_utt_samples:
@@ -173,6 +188,7 @@ class RealTimeEngineWorker(QThread):
             in_speech = False
             silence_run = 0
             speech_seen = False
+            interim_sample_count = 0
 
         while self._running:
             if not self.context.is_meeting_active:
@@ -182,7 +198,15 @@ class RealTimeEngineWorker(QThread):
                 silence_run = 0
                 speech_seen = False
                 abs_samples = 0
+                interim_sample_count = 0
                 time.sleep(0.1)
+                continue
+
+            if self.context.is_meeting_paused:
+                # 일시중지 상태인 경우 오디오 청크를 읽어버리되(버퍼 방지), VAD 추론 및 WAV 저장은 건너뛰고 대기
+                chunk = audio_cap.get_audio_chunk()
+                self.context.signals.partial_transcript_updated.emit("임시", "")
+                time.sleep(0.01)
                 continue
 
             chunk = audio_cap.get_audio_chunk()
@@ -202,9 +226,21 @@ class RealTimeEngineWorker(QThread):
                     in_speech = True
                     utt_start_sample = abs_samples - len(chunk)
                     utt = []
+                    interim_sample_count = 0
                 utt.append(chunk)
                 silence_run = 0
                 speech_seen = True
+                
+                # 실시간 임시(Interim) 전사 피드
+                interim_sample_count += len(chunk)
+                if interim_sample_count >= int(0.5 * sr):
+                    interim_sample_count = 0
+                    audio_so_far = np.concatenate(utt).astype(np.float32)
+                    if len(audio_so_far) >= min_utt_samples:
+                        interim_text = self._process_interim_inference(audio_so_far)
+                        if interim_text:
+                            self.context.signals.partial_transcript_updated.emit("임시", interim_text)
+                
                 # 백프레셔: 발화가 과도하게 길어지면 강제 종료
                 if sum(len(c) for c in utt) >= max_utt_samples:
                     finalize()
@@ -212,6 +248,17 @@ class RealTimeEngineWorker(QThread):
                 # 발화 중 무음: 트레일링 무음으로 포함하되 endpoint 판정
                 utt.append(chunk)
                 silence_run += len(chunk)
+                
+                # 무음 구간에서도 임시 전사를 갱신해줌 (예: 말하는 도중 잠시 쉴 때)
+                interim_sample_count += len(chunk)
+                if interim_sample_count >= int(0.5 * sr):
+                    interim_sample_count = 0
+                    audio_so_far = np.concatenate(utt).astype(np.float32)
+                    if len(audio_so_far) >= min_utt_samples:
+                        interim_text = self._process_interim_inference(audio_so_far)
+                        if interim_text:
+                            self.context.signals.partial_transcript_updated.emit("임시", interim_text)
+                            
                 if silence_run >= endpoint_samples:
                     finalize()
 
@@ -437,10 +484,13 @@ class RealTimeEngineWorker(QThread):
         import wave
         from pathlib import Path
         try:
-            today = datetime.date.today().strftime("%Y-%m-%d")
-            recordings_dir = Path(self.config.docs_save_dir).parent / "Recordings" / today
-            recordings_dir.mkdir(parents=True, exist_ok=True)
-            wav_filepath = recordings_dir / f"meeting_{session_id}.wav"
+            if hasattr(self.context, "current_session_dir") and self.context.current_session_dir:
+                wav_filepath = Path(self.context.current_session_dir) / f"meeting_{session_id}.wav"
+            else:
+                today = datetime.date.today().strftime("%Y-%m-%d")
+                recordings_dir = Path(self.config.docs_save_dir).parent / "Recordings" / today
+                recordings_dir.mkdir(parents=True, exist_ok=True)
+                wav_filepath = recordings_dir / f"meeting_{session_id}.wav"
             
             self._wav_file = wave.open(str(wav_filepath), 'wb')
             self._wav_file.setnchannels(1)
