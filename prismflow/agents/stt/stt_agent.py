@@ -389,6 +389,31 @@ class RealTimeEngineWorker(QThread):
                 self.error_occurred.emit(f"Whisper 추론 오류: {str(e)}")
                 return "Speaker_00", ""
 
+            # ── 무음 환각 블랙리스트 필터 ──────────────────────────────────────────
+            # Whisper는 무음·저에너지 구간에서 학습 데이터에 자주 등장하는 문구를
+            # 그럴싸하게 만들어내는 경향이 있다(특히 뉴스 앵커 오프닝, 자막 문구 등).
+            # 아래 키워드가 포함된 전사 결과는 환각으로 간주하고 빈 문자열로 무효화한다.
+            _HALLUCINATION_BLACKLIST = [
+                "MBC 뉴스",
+                "KBS 뉴스",
+                "SBS 뉴스",
+                "뉴스데스크",
+                "김성현입니다",
+                "김지경입니다",
+                "앵커입니다",
+                "기자입니다",
+                "자막",
+                "Copyright",
+                "Subtitles by",
+                "ご視聴ありがとう",         # 일본어 환각 패턴
+                "字幕",                      # 중국어 자막 환각
+            ]
+            text_lower = text.lower()
+            if any(kw.lower() in text_lower for kw in _HALLUCINATION_BLACKLIST):
+                logger.debug(f"[VAD] 환각 텍스트 차단: {text!r}")
+                text = ""
+            # ──────────────────────────────────────────────────────────────────────
+
         speaker = "Speaker_00"
         if text and self.embedding_extractor is not None:
             # Diarization Pipeline 호출을 완전히 스킵하고, 단독 Embedding Extractor로 글로벌 코사인 매칭을 수행합니다.
