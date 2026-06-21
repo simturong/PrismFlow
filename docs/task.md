@@ -202,11 +202,23 @@
 - [x] 16-6: CLI 디버그 분류 정리("Agent"→"Q&A(도구)", 범례 추가) + i2t는 로컬이라 CLI 로그 없음 안내 — `cli_activity`/`cli_log_window`/`test_cli_activity` 갱신, 5 passed
 - [x] 16-7: 회귀(`test_status`/`test_cli_activity`/`test_flow`/`test_stt` 갱신·신설, 전체 **100 passed/1 skip**) + 문서(history/task/plan/`phase16_stt_benchmark.md`) 동기화
 
-## Phase 17: 회의 제어 UX 재설계 · Mermaid 사용성/자유도 · 실시간 전사 개선 — 🚧 진행 중
+## Phase 17: 회의 제어 UX 재설계 · Mermaid 사용성/자유도 · 실시간 전사 개선 — ✅ 완료
 > Phase 16 E2E 후속 피드백. 모델 결론(사용자 지시): **기본 medium 확정, 빡세게 튜닝**. 상세: docs/implementation_plan.md Phase 17.
 - [x] 17-1: 회의 제어 재설계 — ⏹ 정지(좌) + ▶/⏸ 재생-일시정지 토글(우) 상태기계(`_refresh_meeting_controls`). overlay.py 글리프 escape 통일 재작성. 32 passed
 - [x] 17-2: Mermaid 사용성·자유도 — 폰트 28→20px·htmlLabels 라벨 줄바꿈·패딩↑(잘림 해소), svg 폭 꽉 채움+세로 스크롤(여백/축소 완화), Flow 프롬프트 자유 재구성(subgraph 의무·stale 제거·12~15노드 압축·방향 자유). test_flow 10 passed
 - [x] 17-3: STT 기본 medium 확정(DB) + endpoint 1.0→0.7초(확정 신속·문장 누적 촉진) + interim을 진행발화 전체(상한 10초)로 되돌려 앞부분 망각 해소 + collapse_repetitions 유지. test_stt 6 passed
 - [x] 17-4: 채팅 토글을 상단 컨트롤바(녹음중 옆) 💬 버튼으로 이동(`enable_chat_toggle`/`_on_chat_toggle_clicked`), 중앙 세로 핸들 제거 → 접힘 시 여백 컬럼 없음. 32 passed
 - [x] 17-5: 회귀(test_flow 토글 테스트 갱신, 전체 **100 passed/1 skip**) + 문서(history/task/plan) 동기화
+
+## Phase 18: Mermaid 흐름도 실시간 줌/팬, 작업 표시줄 활성화, 백그라운드 숨김 및 심볼릭 아이콘 통합 구현 — ✅ 완료
+> Mermaid 그래프가 커질 때 가독성 저하를 방지하기 위해 줌/팬 기능을 추가하고, 메인 콘솔의 작업 표시줄 노출, 닫기 시 백그라운드 숨김(트레이 상주), 그리고 PrismFlow 전용 심볼릭 아이콘 및 동적 상태 표시를 통합합니다. 상세: docs/implementation_plan.md Phase 18.
+- [x] 18-1: 오프라인 라이브러리 번들 추가 — `svg-pan-zoom.min.js` 획득 후 `prismflow/agents/flow/resources/` 저장 및 Git 관리 설정
+- [x] 18-2: HTML/CSS 및 로컬 줌 툴바 UI 구축 — `mermaid_html.py` 내 HTML/CSS 리팩토링, Glassmorphism 스타일 줌 툴바(➕, ➖, 🎯 Fit/Center, 🔄 Reset) 추가 및 API 연동
+- [x] 18-3: 다이어그램 업데이트 시 줌/팬 상태 보존(State Preservation) 구현 — `updateDiagram` 실행 시 기존 줌/팬 값을 임시 저장하고 렌더 후 복원하여 화면 튐 방지
+- [x] 18-4: SVG 레이아웃 스타일 충돌 해결 — `svg-pan-zoom`이 viewBox를 올바르게 추적하도록 `#diagram-container svg` CSS 충돌(width 100% 강제 등) 리팩토링
+- [x] 18-5: 프리미엄 앱 로고 이미지 생성 및 배치 — `generate_image`로 `app_icon.png`를 생성하여 `prismflow/resources/` 폴더에 배치
+- [x] 18-6: 작업 표시줄 창 노출 및 아이콘 연동 — `TranslucentOverlay` 플래그에서 `Qt.Tool` 제거 및 `setWindowIcon` 적용
+- [x] 18-7: 창 닫기 시 트레이 최소화(백그라운드 상주) 구현 — `closeEvent` 가드로 종료 아닐 때 ignore & hide 처리, 트레이 `exit_app`에 `is_quitting = True` 적용
+- [x] 18-8: 트레이 아이콘 변경 및 동적 녹음 점 표시 — `app_icon.png` 트레이 지정 및 회의 진행 시 동적 QPainter로 우측 하단 녹음 점 덧그리기 구현
+- [x] 18-9: 회귀 및 렌더링 검증 — `test_flow.py` 리소스 맵 체크 및 전체 `pytest tests/` 무결 검증
 

@@ -2,6 +2,7 @@ import sys
 from datetime import datetime
 from PySide6.QtWidgets import QSystemTrayIcon, QMenu, QStyle, QApplication, QMessageBox
 from PySide6.QtGui import QAction, QIcon
+from PySide6.QtCore import Qt
 from prismflow.core.context import MeetingContext
 
 class SystemTrayManager(QSystemTrayIcon):
@@ -15,9 +16,29 @@ class SystemTrayManager(QSystemTrayIcon):
         # 싱글톤 컨텍스트 획득
         self.context = MeetingContext()
         
-        # 시스템 기본 아이콘으로 초기 아이콘 설정 (SP_ComputerIcon)
-        self.default_icon = QApplication.style().standardIcon(QStyle.SP_ComputerIcon)
-        self.active_icon = QApplication.style().standardIcon(QStyle.SP_MediaPlay)
+        # 심볼릭 앱 아이콘 연동 (resources/app_icon.png)
+        from pathlib import Path
+        from PySide6.QtGui import QPainter, QColor
+        icon_path = Path(__file__).parent.parent / "resources" / "app_icon.png"
+        
+        if icon_path.exists():
+            self.default_icon = QIcon(str(icon_path))
+            
+            # 동적으로 active_icon 생성 (기본 아이콘 위에 빨간 녹음점 그리기)
+            pixmap = self.default_icon.pixmap(32, 32)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            # 우측 하단에 빨간색 동그라미 (녹음 중) 그리기
+            painter.setBrush(QColor(255, 107, 107))
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(20, 20, 10, 10)
+            painter.end()
+            self.active_icon = QIcon(pixmap)
+        else:
+            # 폴백: 시스템 기본 아이콘
+            self.default_icon = QApplication.style().standardIcon(QStyle.SP_ComputerIcon)
+            self.active_icon = QApplication.style().standardIcon(QStyle.SP_MediaPlay)
+            
         self.setIcon(self.default_icon)
         self.setToolTip("PrismFlow AI Assistant")
         
@@ -143,6 +164,7 @@ class SystemTrayManager(QSystemTrayIcon):
     def exit_app(self):
         if self.context.is_meeting_active:
             self.context.end_meeting()
+        self.context.is_quitting = True
         # 트레이 아이콘 명시적 숨김 (종료 시 트레이 아이콘 잔상 방지)
         self.hide()
         QApplication.quit()

@@ -26,15 +26,22 @@ class TranslucentOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # 윈도우 플래그 설정: 프레임리스 + 도구 창 스타일(작업 표시줄 아이콘 제외).
+        # 윈도우 플래그 설정: 프레임리스 + 일반 윈도우 스타일(작업 표시줄 아이콘 표시).
         # '항상 위'는 의도적으로 제외하여, 다른 앱을 선택하면 오버레이가 뒤로 물러나도록 한다.
+        # 작업 표시줄 노출을 위해 Qt.Tool 대신 Qt.Window | Qt.FramelessWindowHint 사용.
         self.setWindowFlags(
             Qt.Window |
-            Qt.FramelessWindowHint |
-            Qt.Tool
+            Qt.FramelessWindowHint
         )
         # 투명 배경 설정
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        # 심볼릭 앱 아이콘 연동 (resources/app_icon.png)
+        from pathlib import Path
+        from PySide6.QtGui import QIcon
+        icon_path = Path(__file__).parent.parent / "resources" / "app_icon.png"
+        if icon_path.exists():
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         # 마우스 추적 활성화 (클릭하지 않아도 hover 감지 및 커서 변경을 위함)
         self.setMouseTracking(True)
@@ -302,13 +309,19 @@ class TranslucentOverlay(QWidget):
         super().leaveEvent(event)
 
     def closeEvent(self, event):
-        try:
-            self.context.signals.meeting_started.disconnect(self._on_meeting_started)
-            self.context.signals.meeting_ended.disconnect(self._on_meeting_ended)
-            self.context.signals.meeting_paused.disconnect(self._on_meeting_paused)
-        except Exception:
-            pass
-        super().closeEvent(event)
+        # 1. 시스템 종료 단계(is_quitting = True)일 때만 실제 종료 수행
+        if getattr(self.context, "is_quitting", False):
+            try:
+                self.context.signals.meeting_started.disconnect(self._on_meeting_started)
+                self.context.signals.meeting_ended.disconnect(self._on_meeting_ended)
+                self.context.signals.meeting_paused.disconnect(self._on_meeting_paused)
+            except Exception:
+                pass
+            super().closeEvent(event)
+        else:
+            # 2. 일반 닫기(X 또는 Alt+F4) 시에는 백그라운드 유지(ignore & hide)
+            event.ignore()
+            self.hide()
 
     # -------------------- 회의 제어 상태기계 --------------------
     def _on_playpause_clicked(self):

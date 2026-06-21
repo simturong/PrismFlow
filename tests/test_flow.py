@@ -15,8 +15,17 @@ def test_mermaid_html_generation():
     """Mermaid.js HTML 생성 템플릿 검증"""
     html = get_mermaid_html()
     assert "mermaid.min.js" in html
+    assert "svg-pan-zoom.min.js" in html
     assert "updateDiagram" in html
     assert "diagram-container" in html
+    assert "zoom-controls" in html
+
+def test_svg_pan_zoom_resource_existence():
+    """오프라인 줌/팬을 위한 svg-pan-zoom.min.js 리소스 파일이 실제로 존재하며 패키징 가능한지 검증"""
+    from pathlib import Path
+    resource_path = Path(__file__).parent.parent / "prismflow" / "agents" / "flow" / "resources" / "svg-pan-zoom.min.js"
+    assert resource_path.exists()
+    assert resource_path.stat().st_size > 10000
 
 def test_flow_ui_init(q_app):
     """FlowUI 로드 및 다이어그램 업데이트 호출 검증"""

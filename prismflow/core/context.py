@@ -39,6 +39,7 @@ class MeetingContext:
         self._transcripts = []
         self._current_mermaid_code = ""
         self._last_screen_info = None
+        self.is_quitting = False
         
         # DB 매니저 기본 초기화
         self._config = AppConfig.load_default()
