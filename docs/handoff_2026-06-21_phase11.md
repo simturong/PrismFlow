@@ -1,7 +1,13 @@
 # PrismFlow 이어받기 핸드오프 (2026-06-21 세션 2, Phase 11 = 앱 실행 UX 수정)
 
 ## 현재 상태 (한 줄)
-`master`, 마지막 커밋 **8bce94d**. 테스트 **76 passed / 1 skipped**, 전체 스위트 **3회 연속 무결**(세그폴트 0), 실제 앱 구동 스모크 rc=0. 작업 트리 클린.
+`master`, 마지막 커밋 **57e5266**. 테스트 **85 passed / 1 skipped**, 전체 스위트 **3회 연속 무결**(세그폴트 0), 실제 앱 구동 스모크 rc=0. 작업 트리 클린.
+
+## Phase F (남은 3항목)
+- `8bce94d` 회의종료 프리즈 수정(앞서 기재)
+- `c7eecf0` 3a 폰트 경고 필터 + 3b 앱종료 시 CLI 강제중단(terminate_all, in-flight Popen 추적)
+- `57e5266` 1B i2t 용어집: PPT 슬라이드 텍스트 → 화면 용어집 → STT 근접 오인식 보정(`core/glossary.py`, `screen_glossary` 테이블, `slide_text_detected`)
+- 2번(ChatUI 상태 노출)은 사용자 선택으로 **미적용**(채팅창 깔끔 유지)
 
 ## 이번 세션 커밋 (Phase A~E + 프리즈 수정)
 - `5c1477e` Phase A 오버레이 UX: 녹음표시 우상단 이동, 항상위 해제, 투명도 슬라이더, 흐름도 성장 리사이즈
